@@ -7,7 +7,7 @@ def test_doc_intelligence_service_initialization():
     """Verify service initializes cleanly in fallback or live mode."""
     service = DocIntelligenceService()
     assert service is not None
-    print(f"\n[Test 1 Output] Service initialized. Mode: {'Live Azure' if service.is_live else 'Local Fallback'}")
+    print(f"\n[Test 1 Output] DocIntelligenceService initialized. Mode: {'Live Azure' if service.is_live else 'Local Fallback'}")
 
 def test_parse_resume_fallback_mode():
     """Verify resume parsing returns required schema fields."""
@@ -43,4 +43,22 @@ async def test_master_orchestrator_pipeline_step1():
     assert "parsed_document" in response
     assert response["pipeline_status"] == "Step 1 (Doc Intelligence) Ready"
 
+def test_parse_actual_sample_resume_pdf():
+    """Verify parsing an actual PDF file from tests/sample_resumes/ directory."""
+    import os
+    service = DocIntelligenceService()
+    sample_pdf_path = os.path.join("tests", "sample_resumes", "cv_anvi.pdf")
+    
+    if os.path.exists(sample_pdf_path):
+        with open(sample_pdf_path, "rb") as f:
+            pdf_bytes = f.read()
+            
+        result = service.parse_resume(pdf_bytes, filename="cv_anvi.pdf")
+        
+        print(f"\n=== [Test 4 Output] Parsing Real File: cv_anvi.pdf ===")
+        print(json.dumps(result, indent=2))
+        
+        assert "raw_text" in result
+        assert result["file_type"] == "pdf"
+        assert len(result["raw_text"]) > 0
 

@@ -1,9 +1,15 @@
 import os
+import io
 import logging
 from typing import Dict, Any, List
 from azure.core.credentials import AzureKeyCredential
 from azure.ai.documentintelligence import DocumentIntelligenceClient
 from azure.ai.documentintelligence.models import AnalyzeResult
+
+try:
+    import pypdf
+except ImportError:
+    pypdf = None
 
 logger = logging.getLogger(__name__)
 
@@ -11,7 +17,7 @@ class DocIntelligenceService:
     """
     Member 1: Azure AI Document Intelligence Service
     Parses PDF/DOCX resume documents, preserving layout, page numbers, and embedded tables.
-    Includes an offline local fallback parser for development and testing prior to Azure configuration.
+    Includes an offline local fallback parser using pypdf for development prior to Azure credential setup.
     """
     def __init__(self, endpoint: str = None, key: str = None):
         self.endpoint = endpoint or os.getenv("AZURE_DOC_INTEL_ENDPOINT", "").strip()
@@ -83,13 +89,33 @@ class DocIntelligenceService:
             return self._parse_fallback(file_bytes, file_ext)
 
     def _parse_fallback(self, file_bytes: bytes, file_ext: str) -> Dict[str, Any]:
-        try:
-            raw_text = file_bytes.decode("utf-8", errors="ignore").strip()
-        except Exception:
-            raw_text = ""
+        extracted_text = ""
+        page_count = 1
 
-        if not raw_text:
-            raw_text = (
+        # 1. If it's a PDF file, try extracting clean text using pypdf
+        if file_ext == "pdf" or file_bytes.startswith(b"%PDF"):
+            if pypdf:
+                try:
+                    reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+                    page_count = len(reader.pages)
+                    text_pages = [page.extract_text() for page in reader.pages if page.extract_text()]
+                    extracted_text = "\n".join(text_pages).strip()
+                except Exception as e:
+                    logger.warning(f"pypdf extraction failed: {e}")
+
+        # 2. If not a PDF or pypdf extraction returned empty, attempt UTF-8 string decoding
+        if not extracted_text:
+            try:
+                decoded = file_bytes.decode("utf-8", errors="ignore").strip()
+                # Filter out raw binary PDF stream headers (%PDF-1...)
+                if decoded and not decoded.startswith("%PDF-") and "stream" not in decoded[:200]:
+                    extracted_text = decoded
+            except Exception:
+                extracted_text = ""
+
+        # 3. Default clean mock text fallback if no readable text extracted
+        if not extracted_text:
+            extracted_text = (
                 "John Doe\n"
                 "Software Engineer | Email: john.doe@example.com | Phone: (555) 019-2834\n\n"
                 "SUMMARY:\n"
@@ -103,8 +129,8 @@ class DocIntelligenceService:
             )
 
         return {
-            "raw_text": raw_text,
-            "page_count": 1,
+            "raw_text": extracted_text,
+            "page_count": page_count,
             "tables": [],
             "file_type": file_ext,
             "mode": "local_fallback"
