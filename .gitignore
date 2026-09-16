@@ -1,0 +1,23 @@
+# Security & Secrets
+.env
+.env.local
+*.pem
+*.key
+
+# Python Virtual Environments & Cache
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+.pytest_cache/
+
+# Node / Frontend Build Outputs
+node_modules/
+dist/
+build/
+.DS_Store
+
+# Test outputs
+*.pdf
+!tests/sample_resumes/*.pdf
