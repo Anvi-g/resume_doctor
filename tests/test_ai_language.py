@@ -45,6 +45,23 @@ def test_redact_sample_resume_pdf(service, sample_pdf_text):
     """
     result = asyncio.run(service.redact_pii_and_extract_entities(sample_pdf_text))
 
+    # --- Live Output Inspection ---
+    print("\n" + "=" * 70)
+    print(" >>> MODULE 2: TEST OUTPUT FOR sample_resume_testing.pdf <<<")
+    print("=" * 70)
+    print("\n[+] CLEAN REDACTED TEXT (First 350 characters):")
+    print("-" * 50)
+    print(result.clean_text[:350] + "\n...")
+    print("-" * 50)
+    print("\n[+] DETECTED PII ENTITIES:")
+    for p in result.detected_pii:
+        print(f"    * {p['type']}: '{p['text']}' (Confidence: {p['confidence']})")
+    print("\n[+] EXTRACTED SKILLS:")
+    print(f"    {result.extracted_skills}")
+    print("\n[+] EXTRACTED CERTIFICATIONS:")
+    print(f"    {result.extracted_certifications}")
+    print("=" * 70 + "\n")
+
     assert isinstance(result, RedactPIIResponse)
     assert len(result.clean_text) > 0
 
@@ -62,6 +79,7 @@ def test_redact_sample_resume_pdf(service, sample_pdf_text):
     # Skill Extraction Assertions
     assert len(result.extracted_skills) > 0
     assert any(skill in result.extracted_skills for skill in ["Python", "SQL", "Git", "JavaScript"])
+
 
 
 def test_direct_text_pii_masking(service):
