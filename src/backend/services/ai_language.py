@@ -197,7 +197,7 @@ class AILanguageService:
         clean_text = re.sub(email_pattern, "[EMAIL]", clean_text)
 
         # 2. Regex Mask Phone Numbers
-        phone_pattern = r'(\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}'
+        phone_pattern = r'(\+?\d{1,4}[-.\s]?)?\(?\d{2,5}\)?[-.\s]?\d{3,5}[-.\s]?\d{3,5}'
         for match in re.finditer(phone_pattern, raw_text):
             detected_pii.append({
                 "type": "PhoneNumber",
