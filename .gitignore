@@ -12,12 +12,23 @@ venv/
 .venv/
 .pytest_cache/
 
+# IDE & OS Files
+.vscode/
+.idea/
+.DS_Store
+
+# Utility & Local Scripts
+generate_pdf.py
+
 # Node / Frontend Build Outputs
 node_modules/
 dist/
 build/
-.DS_Store
 
-# Test outputs
+# Test & Log outputs
 *.pdf
 !tests/sample_resumes/*.pdf
+*.log
+.coverage
+htmlcov/
+
