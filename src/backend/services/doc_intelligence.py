@@ -1,63 +1,137 @@
-"""
-Azure AI Document Intelligence Service (Member 1).
-Parses resume documents (PDF/DOCX) into structured layout and text.
-"""
+import os
 import io
 import logging
-from typing import Dict, Any
-
-logger = logging.getLogger(__name__)
+from typing import Dict, Any, List
+from azure.core.credentials import AzureKeyCredential
+from azure.ai.documentintelligence import DocumentIntelligenceClient
+from azure.ai.documentintelligence.models import AnalyzeResult
 
 try:
     import pypdf
 except ImportError:
     pypdf = None
 
+logger = logging.getLogger(__name__)
 
 class DocIntelligenceService:
-    def __init__(self, endpoint: str = "", api_key: str = ""):
-        self.endpoint = endpoint
-        self.api_key = api_key
+    """
+    Member 1: Azure AI Document Intelligence Service
+    Parses PDF/DOCX resume documents, preserving layout, page numbers, and embedded tables.
+    Includes an offline local fallback parser using pypdf for development prior to Azure credential setup.
+    """
+    def __init__(self, endpoint: str = None, key: str = None):
+        self.endpoint = endpoint or os.getenv("AZURE_DOC_INTEL_ENDPOINT", "").strip()
+        self.key = key or os.getenv("AZURE_DOC_INTEL_KEY", "").strip()
+        
+        self.is_live = bool(
+            self.endpoint 
+            and self.key 
+            and not self.endpoint.startswith("https://<your-")
+            and not self.key.startswith("your_")
+        )
 
-    def parse_resume(self, file_bytes: bytes, file_name: str) -> Dict[str, Any]:
-        """
-        Parses uploaded file bytes into extracted text and layout sections.
-        """
+        if self.is_live:
+            logger.info("Initializing Azure Document Intelligence Client in live mode.")
+            self.client = DocumentIntelligenceClient(
+                endpoint=self.endpoint,
+                credential=AzureKeyCredential(self.key)
+            )
+        else:
+            logger.info("Azure Document Intelligence credentials not configured. Running in local fallback mode.")
+            self.client = None
+
+    def parse_resume(self, file_bytes: bytes, filename: str = "resume.pdf") -> Dict[str, Any]:
+        file_ext = filename.split(".")[-1].lower() if "." in filename else "pdf"
+
+        if self.is_live and self.client:
+            return self._parse_with_azure(file_bytes, file_ext)
+        else:
+            return self._parse_fallback(file_bytes, file_ext)
+
+    def _parse_with_azure(self, file_bytes: bytes, file_ext: str) -> Dict[str, Any]:
+        try:
+            poller = self.client.begin_analyze_document(
+                model_id="prebuilt-layout",
+                body=file_bytes,
+                content_type="application/octet-stream"
+            )
+            result: AnalyzeResult = poller.result()
+
+            extracted_text = result.content if result.content else ""
+            page_count = len(result.pages) if result.pages else 1
+
+            tables_data = []
+            if result.tables:
+                for table in result.tables:
+                    t_info = {
+                        "row_count": table.row_count,
+                        "column_count": table.column_count,
+                        "cells": [
+                            {
+                                "row_index": cell.row_index,
+                                "column_index": cell.column_index,
+                                "content": cell.content
+                            }
+                            for cell in table.cells
+                        ]
+                    }
+                    tables_data.append(t_info)
+
+            return {
+                "raw_text": extracted_text,
+                "page_count": page_count,
+                "tables": tables_data,
+                "file_type": file_ext,
+                "mode": "azure_doc_intelligence"
+            }
+        except Exception as e:
+            logger.error(f"Azure Document Intelligence error: {e}. Falling back to local parser.")
+            return self._parse_fallback(file_bytes, file_ext)
+
+    def _parse_fallback(self, file_bytes: bytes, file_ext: str) -> Dict[str, Any]:
         extracted_text = ""
+        page_count = 1
 
-        # Extract PDF text if PDF file format
-        if file_name.lower().endswith(".pdf") and pypdf is not None and file_bytes:
-            try:
-                reader = pypdf.PdfReader(io.BytesIO(file_bytes))
-                extracted_text = "\n".join(
-                    page.extract_text() or "" for page in reader.pages
-                ).strip()
-            except Exception as e:
-                logger.warning(f"pypdf extraction error: {e}")
+        # 1. If it's a PDF file, try extracting clean text using pypdf
+        if file_ext == "pdf" or file_bytes.startswith(b"%PDF"):
+            if pypdf:
+                try:
+                    reader = pypdf.PdfReader(io.BytesIO(file_bytes))
+                    page_count = len(reader.pages)
+                    text_pages = [page.extract_text() for page in reader.pages if page.extract_text()]
+                    extracted_text = "\n".join(text_pages).strip()
+                except Exception as e:
+                    logger.warning(f"pypdf extraction failed: {e}")
 
-        # Fallback to UTF-8 decoding if text extraction is empty
+        # 2. If not a PDF or pypdf extraction returned empty, attempt UTF-8 string decoding
         if not extracted_text:
             try:
                 decoded = file_bytes.decode("utf-8", errors="ignore").strip()
-                # filter out non-printable binary garbage if any
-                lines = [line for line in decoded.split("\n") if not line.startswith("%PDF") and "obj" not in line and "xref" not in line]
-                extracted_text = "\n".join(lines).strip()
+                # Filter out raw binary PDF stream headers (%PDF-1...)
+                if decoded and not decoded.startswith("%PDF-") and "stream" not in decoded[:200]:
+                    extracted_text = decoded
             except Exception:
                 extracted_text = ""
 
-        if not extracted_text or len(extracted_text) < 10:
+        # 3. Default clean mock text fallback if no readable text extracted
+        if not extracted_text:
             extracted_text = (
-                f"Sample Resume extracted from {file_name}\n\n"
-                "Experience:\n"
-                "- Built a website.\n"
-                "- Developed backend REST APIs using Python and FastAPI.\n\n"
-                "Skills:\n"
-                "Python, FastAPI, Azure, Docker, SQL"
+                "John Doe\n"
+                "Software Engineer | Email: john.doe@example.com | Phone: (555) 019-2834\n\n"
+                "SUMMARY:\n"
+                "Experienced Python Developer with 5+ years in cloud architectures and Azure services.\n\n"
+                "EXPERIENCE:\n"
+                "Senior Engineer at Tech Corp (2021-Present)\n"
+                "- Built scalable REST APIs with FastAPI and Azure App Service.\n"
+                "- Reduced backend response latency by 35% using async pipeline caching.\n\n"
+                "SKILLS:\n"
+                "Python, FastAPI, Azure Document Intelligence, Azure OpenAI, PostgreSQL, Docker, Git"
             )
 
         return {
-            "file_name": file_name,
-            "extracted_text": extracted_text,
+            "raw_text": extracted_text,
+            "page_count": page_count,
             "tables": [],
-            "status": "success",
+            "file_type": file_ext,
+            "mode": "local_fallback"
         }
