@@ -5,6 +5,13 @@ from src.backend.models.schemas import (
     STARRewriteBatchOutput,
     ATSScoreRequest,
     STARRewriteRequest,
+    JDMatchResult,
+    MasterAnalyzeResponse,
+    ParseResumeResponse,
+    RedactPIIResponse,
+    ATSAnalysisResult,
+    StarRewrite,
+    DirectJDMatchRequest,
 )
 
 __all__ = [
@@ -14,4 +21,11 @@ __all__ = [
     "STARRewriteBatchOutput",
     "ATSScoreRequest",
     "STARRewriteRequest",
+    "JDMatchResult",
+    "MasterAnalyzeResponse",
+    "ParseResumeResponse",
+    "RedactPIIResponse",
+    "ATSAnalysisResult",
+    "StarRewrite",
+    "DirectJDMatchRequest",
 ]

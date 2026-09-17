@@ -17,3 +17,7 @@ langchain-community>=0.0.20
 pypdf>=4.0.0
 
 pytest>=8.0.0
+
+# Member 4: TF-IDF & Cosine Similarity JD Matcher
+scikit-learn>=1.4.0
+

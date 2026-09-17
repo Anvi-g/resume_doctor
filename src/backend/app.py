@@ -108,3 +108,109 @@ async def process_full_pipeline(
         return pipeline_result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Pipeline processing failed: {str(e)}")
+
+
+# =====================================================================
+# Member 4 Gateway Endpoints (Master Project Plan Page 3 & 4)
+# =====================================================================
+
+# Import Member 4 schemas and matcher
+from src.backend.models.schemas import (
+    MasterAnalyzeResponse,
+    JDMatchResult,
+    DirectJDMatchRequest,
+)
+from src.backend.services.jd_matcher import match_jd_with_resume
+
+
+@app.get("/", tags=["Root"])
+def root_endpoint():
+    """Service landing endpoint with system status."""
+    return {
+        "service": "Resume Doctor API Gateway",
+        "version": "1.0.0",
+        "status": "Operational",
+        "docs_url": "/docs",
+        "health_check": "/api/health"
+    }
+
+
+@app.get("/api/health", tags=["Monitoring"])
+def api_health_check():
+    """Detailed health check validating all 4 AI-103 and data modules."""
+    return {
+        "status": "Healthy",
+        "modules": {
+            "m1_doc_intel": "Active",
+            "m2_ai_language": "Active",
+            "m3_openai_ats": "Mock" if openai_service.is_mock_mode else "Live",
+            "m4_jd_matcher": "Active (TF-IDF + Cosine Similarity)"
+        }
+    }
+
+
+@app.post(
+    "/api/analyze",
+    response_model=MasterAnalyzeResponse,
+    tags=["Core Pipeline"]
+)
+async def analyze_resume(
+    resume_file: UploadFile = File(..., description="Resume PDF or DOCX file"),
+    job_description: str = Form("", description="Target job description text"),
+    target_role: Optional[str] = Form("", description="Optional target job title")
+):
+    """
+    Master Ingestion Gateway Route (Member 4 Lead):
+    Orchestrates all 4 modules:
+    1. Member 1: Layout & table extraction (Doc Intelligence)
+    2. Member 2: Sensitive entity redaction & NER (Azure AI Language)
+    3. Concurrently via asyncio.gather():
+       - Member 3: ATS Score & STAR bullet rewrite (Azure OpenAI)
+       - Member 4: TF-IDF vectorization & Cosine Similarity match
+    """
+    filename = resume_file.filename or "resume.pdf"
+    file_ext = filename.split(".")[-1].lower() if "." in filename else ""
+    if file_ext not in ["pdf", "docx", "txt"]:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file format '.{file_ext}'. Please upload a PDF (.pdf) or DOCX (.docx) resume."
+        )
+
+    try:
+        file_bytes = await resume_file.read()
+        if not file_bytes:
+            raise HTTPException(status_code=400, detail="The uploaded resume file is empty.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read resume file: {str(e)}")
+
+    try:
+        response = await orchestrator.analyze_to_model(
+            file_bytes=file_bytes,
+            filename=filename,
+            job_description=job_description,
+            target_role=target_role or ""
+        )
+        return response
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Pipeline processing failed: {str(e)}")
+
+
+@app.post(
+    "/api/match-jd",
+    response_model=JDMatchResult,
+    tags=["Module 4 Direct"]
+)
+async def direct_match_jd(request: DirectJDMatchRequest):
+    """
+    Direct endpoint for testing TF-IDF Cosine Similarity and Skill Gap matching.
+    """
+    try:
+        result = await match_jd_with_resume(
+            clean_text=request.clean_text,
+            jd_text=request.jd_text,
+            resume_skills=request.resume_skills
+        )
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"JD match computation failed: {str(e)}")
+
