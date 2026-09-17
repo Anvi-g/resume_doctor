@@ -1,0 +1,1 @@
+"""Resume Doctor frontend package."""

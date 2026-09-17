@@ -1,4 +1,4 @@
-# RESUME DOCTOR: 3-DAY ULTRA SPRINT PROJECT PLAN
+    # RESUME DOCTOR: 3-DAY ULTRA SPRINT PROJECT PLAN
 **Target Completion: September 18** | **LMS Lock & Review Buffer: September 19 – 21** | **Final LMS Submission: September 22**
 
 > [!IMPORTANT]
