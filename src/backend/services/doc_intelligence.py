@@ -1,5 +1,6 @@
 import os
 import io
+import re
 import logging
 from typing import Dict, Any, List
 from azure.core.credentials import AzureKeyCredential
@@ -17,7 +18,7 @@ class DocIntelligenceService:
     """
     Member 1: Azure AI Document Intelligence Service
     Parses PDF/DOCX resume documents, preserving layout, page numbers, and embedded tables.
-    Includes an offline local fallback parser using pypdf for development prior to Azure credential setup.
+    Extracts structured section blocks and provides an offline local fallback parser.
     """
     def __init__(self, endpoint: str = None, key: str = None):
         self.endpoint = endpoint or os.getenv("AZURE_DOC_INTEL_ENDPOINT", "").strip()
@@ -44,9 +45,13 @@ class DocIntelligenceService:
         file_ext = filename.split(".")[-1].lower() if "." in filename else "pdf"
 
         if self.is_live and self.client:
-            return self._parse_with_azure(file_bytes, file_ext)
+            result = self._parse_with_azure(file_bytes, file_ext)
         else:
-            return self._parse_fallback(file_bytes, file_ext)
+            result = self._parse_fallback(file_bytes, file_ext)
+
+        # Day 2 Enhancement: Extract structured section blocks
+        result["sections"] = self._extract_sections(result.get("raw_text", ""))
+        return result
 
     def _parse_with_azure(self, file_bytes: bytes, file_ext: str) -> Dict[str, Any]:
         try:
@@ -92,7 +97,6 @@ class DocIntelligenceService:
         extracted_text = ""
         page_count = 1
 
-        # 1. If it's a PDF file, try extracting clean text using pypdf
         if file_ext == "pdf" or file_bytes.startswith(b"%PDF"):
             if pypdf:
                 try:
@@ -103,17 +107,14 @@ class DocIntelligenceService:
                 except Exception as e:
                     logger.warning(f"pypdf extraction failed: {e}")
 
-        # 2. If not a PDF or pypdf extraction returned empty, attempt UTF-8 string decoding
         if not extracted_text:
             try:
                 decoded = file_bytes.decode("utf-8", errors="ignore").strip()
-                # Filter out raw binary PDF stream headers (%PDF-1...)
                 if decoded and not decoded.startswith("%PDF-") and "stream" not in decoded[:200]:
                     extracted_text = decoded
             except Exception:
                 extracted_text = ""
 
-        # 3. Default clean mock text fallback if no readable text extracted
         if not extracted_text:
             extracted_text = (
                 "John Doe\n"
@@ -135,3 +136,27 @@ class DocIntelligenceService:
             "file_type": file_ext,
             "mode": "local_fallback"
         }
+
+    def _extract_sections(self, text: str) -> Dict[str, str]:
+        """Day 2 Feature: Split resume text into section blocks (Education, Experience, Skills, Projects)."""
+        headings = [
+            "SUMMARY", "OBJECTIVE", "EXPERIENCE", "WORK EXPERIENCE", 
+            "EDUCATION", "SKILLS", "TECHNICAL SKILLS", "PROJECTS", 
+            "CERTIFICATIONS", "ACHIEVEMENTS", "PUBLICATIONS"
+        ]
+        pattern = r'\n(?=(' + '|'.join(headings) + r')[:\s\n])'
+        splits = re.split(pattern, text, flags=re.IGNORECASE)
+
+        sections = {}
+        current_header = "HEADER"
+        
+        for chunk in splits:
+            if not chunk or not chunk.strip():
+                continue
+            upper_chunk = chunk.strip().upper()
+            if upper_chunk in headings:
+                current_header = upper_chunk
+            else:
+                sections[current_header] = sections.get(current_header, "") + "\n" + chunk.strip()
+
+        return {k: v.strip() for k, v in sections.items() if v.strip()}
