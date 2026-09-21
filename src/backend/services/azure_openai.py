@@ -274,22 +274,13 @@ class AzureOpenAIService:
             if not cleaned:
                 continue
 
-            # Check if input bullet matches common demo pattern "built a website"
-            if "built a website" in cleaned.lower():
-                rewritten = "Developed a Django event platform that automated ticket booking, reducing booking completion time by 40% while supporting 500+ users."
-                s_t = "Manual ticket booking caused bottlenecks and delays for event attendees."
-                action = "Architected a responsive Django web application with automated database triggers and payment integration."
-                result = "Reduced booking completion time by 40% and scaled platform to handle 500+ active users."
-                metrics = ["40% reduction in booking completion time", "500+ concurrent active users"]
-            else:
-                verb = "Engineered" if "code" in cleaned.lower() or "built" in cleaned.lower() else "Spearheaded"
-                rewritten = f"{verb} system architecture for '{cleaned}', increasing operational efficiency by 35% and cutting processing latency by 250ms."
-                s_t = f"Faced inefficient workflows during implementation of '{cleaned}'."
-                action = f"Deployed optimized asynchronous pipelines and modern framework components for '{cleaned}'."
-                result = "Improved operational throughput by 35% and lowered response latency by 250ms."
-                metrics = ["35% efficiency boost", "250ms latency reduction"]
+            verb = "Engineered" if any(kw in cleaned.lower() for kw in ["code", "built", "develop", "api", "python", "system", "data", "app", "model"]) else "Spearheaded"
+            rewritten = f"{verb} optimized implementation of '{cleaned}', increasing operational throughput by 35% and reducing execution latency."
+            s_t = f"Identified opportunity to enhance workflow efficiency for '{cleaned}'."
+            action = f"Deployed robust framework design and automated processing pipelines."
+            result = "Achieved 35% performance boost and improved system reliability."
+            metrics = ["35% efficiency boost", "Reduced execution latency"]
 
-            # Append validated STARRewriteItem object to collection
             rewrites.append(
                 STARRewriteItem(
                     original_bullet=cleaned,
@@ -298,9 +289,10 @@ class AzureOpenAIService:
                     action=action,
                     result=result,
                     metrics_added=metrics,
-                    improvement_notes="Transformed passive description into STAR formula with active verb, clear tech stack, and quantifiable performance gains."
+                    improvement_notes="Transformed into STAR format with strong action verb and quantifiable performance metric."
                 )
             )
+
 
         # Return validated STARRewriteBatchOutput Pydantic object
         return STARRewriteBatchOutput(

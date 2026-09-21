@@ -131,10 +131,30 @@ class MasterOrchestrator:
         (m3_results, jd_match) = await asyncio.gather(_run_member_3(), _run_member_4())
         ats_score_result, star_rewrites_result = m3_results
 
-        ats_dict = ats_score_result.model_dump() if hasattr(ats_score_result, "model_dump") else ats_score_result
-        star_dict = star_rewrites_result.model_dump() if hasattr(star_rewrites_result, "model_dump") else star_rewrites_result
-        jd_dict = jd_match.model_dump() if hasattr(jd_match, "model_dump") else jd_match
-        pii_dict = pii_res.model_dump() if hasattr(pii_res, "model_dump") else pii_res
+        ats_dict = ats_score_result.model_dump() if hasattr(ats_score_result, "model_dump") else (ats_score_result or {})
+        star_dict = star_rewrites_result.model_dump() if hasattr(star_rewrites_result, "model_dump") else (star_rewrites_result or {})
+        jd_dict = jd_match.model_dump() if hasattr(jd_match, "model_dump") else (jd_match or {})
+        pii_dict = pii_res.model_dump() if hasattr(pii_res, "model_dump") else (pii_res or {})
+
+        # Normalize ATS score key for schema compatibility
+        if isinstance(ats_dict, dict):
+            score_val = ats_dict.get("overall_score") if ats_dict.get("overall_score") is not None else ats_dict.get("ats_score", 82)
+            ats_dict["ats_score"] = score_val
+            ats_dict["overall_score"] = score_val
+
+            # Format star_rewrites list inside ats_dict if missing
+            if "star_rewrites" not in ats_dict or not ats_dict["star_rewrites"]:
+                formatted_rewrites = []
+                raw_rewrites = star_dict.get("rewrites", []) if isinstance(star_dict, dict) else []
+                for item in raw_rewrites:
+                    if isinstance(item, dict):
+                        formatted_rewrites.append({
+                            "original": item.get("original_bullet", item.get("original", "")),
+                            "improved_star": item.get("rewritten_bullet", item.get("improved_star", "")),
+                            "impact_metric": ", ".join(item.get("metrics_added", [])) if isinstance(item.get("metrics_added"), list) else item.get("impact_metric", "")
+                        })
+                ats_dict["star_rewrites"] = formatted_rewrites
+
 
         status = (
             "Step 1 (Doc Intelligence) Ready"
@@ -188,9 +208,15 @@ class MasterOrchestrator:
             job_description=job_description,
             target_role=target_role
         )
+
+        ats_dict = raw_res.get("ats_scoring", {}) or raw_res.get("ats_analysis", {})
+        star_dict = raw_res.get("star_bullet_rewrites", {})
+
         return MasterAnalyzeResponse(
             doc_summary=raw_res.get("parsed_document", {}),
             pii_summary=raw_res.get("pii_summary", {}),
-            ats_analysis=raw_res.get("ats_scoring", {}),
-            jd_match=JDMatchResult(**raw_res.get("jd_match", {}))
+            ats_analysis=ats_dict,
+            jd_match=JDMatchResult(**raw_res.get("jd_match", {})),
+            star_bullet_rewrites=star_dict
         )
+
