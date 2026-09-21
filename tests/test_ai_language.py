@@ -7,8 +7,9 @@ Tests:
 4. Edge cases (empty text, whitespace)
 5. Pydantic schema contract integrity
 """
-
 import asyncio
+import re
+import time
 from pathlib import Path
 import pypdf
 import pytest
@@ -128,3 +129,73 @@ def test_pydantic_schema_serialization(service):
     assert "detected_pii" in dumped
     assert "extracted_skills" in dumped
     assert "extracted_certifications" in dumped
+
+def test_international_phone_masking(service):
+    """
+    Test 5: Verifies that diverse international phone formats are masked.
+    Tests US parentheses, Indian +91, UK +44, and standard dashes.
+    """
+    cases = [
+        "Call me at +1 (555) 234-5678 for details.",
+        "Mobile: +91 98765 43210 or 09876543210.",
+        "Office: +44 20 7946 0958 ext 12.",
+        "Direct: 555-019-2834."
+    ]
+    for text in cases:
+        result = asyncio.run(service.redact_pii_and_extract_entities(text))
+        assert "[PHONE]" in result.clean_text, f"Failed to mask phone number in: '{text}'"
+        # Verify no raw 7+ digit phone numbers remained
+        assert not re.search(r'\d{3}[-.\s]?\d{4}', result.clean_text)
+
+
+def test_complex_email_masking(service):
+    """
+    Test 6: Verifies standard, subdomain, and plus-addressed emails are masked.
+    """
+    sample = (
+        "Inquiries to alex.engineer+filter@subdomain.company.co.uk "
+        "or secondary email dev_team.lead@tech-startup.io."
+    )
+    result = asyncio.run(service.redact_pii_and_extract_entities(sample))
+    assert "alex.engineer+filter@subdomain.company.co.uk" not in result.clean_text
+    assert "dev_team.lead@tech-startup.io" not in result.clean_text
+    assert "[EMAIL]" in result.clean_text
+
+
+def test_ssn_identification_and_masking(service):
+    """
+    Test 7: Verifies Social Security Numbers (SSN) are masked with [SSN].
+    """
+    sample = "Candidate Tax ID / SSN: 123-45-6789 on record."
+    result = asyncio.run(service.redact_pii_and_extract_entities(sample))
+    assert "123-45-6789" not in result.clean_text
+    assert "[SSN]" in result.clean_text
+    detected_types = [p["type"] for p in result.detected_pii]
+    assert "USSocialSecurityNumber" in detected_types
+
+
+def test_reverse_offset_consecutive_entities(service):
+    """
+    Test 8: Verifies that consecutive PII tokens do not drift character indices.
+    Tests reverse-offset slicing integrity.
+    """
+    sample = "Direct contact: john.doe@example.com +1-555-0199."
+    result = asyncio.run(service.redact_pii_and_extract_entities(sample))
+    assert "john.doe@example.com" not in result.clean_text
+    assert "+1-555-0199" not in result.clean_text
+    assert "[EMAIL]" in result.clean_text
+    assert "[PHONE]" in result.clean_text
+
+
+def test_pii_latency_benchmark(service, sample_pdf_text):
+    """
+    Test 9: Verifies that PII redaction and extraction executes well within SLA (< 1.5s).
+    """
+    start_time = time.perf_counter()
+    result = asyncio.run(service.redact_pii_and_extract_entities(sample_pdf_text))
+    duration = time.perf_counter() - start_time
+
+    print(f"\n[BENCHMARK] PII Redaction & Extraction Duration: {duration * 1000:.2f} ms")
+    assert duration < 1.5, f"Latency too high: {duration:.2f}s"
+    assert len(result.clean_text) > 0
+

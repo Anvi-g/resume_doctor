@@ -147,3 +147,72 @@ class STARRewriteRequest(BaseModel):
     target_jd: Optional[str] = Field(
         "", description="Optional Job Description text for targeted rewriting"
     )
+
+
+# =====================================================================
+# Member 4 (Data Lead) Schemas & Master Gateway Response Contracts
+# Reference: Resume Doctor Master Project Plan (Page 2 & 3)
+# =====================================================================
+
+class ParseResumeResponse(BaseModel):
+    """Module 1 Output Schema."""
+    raw_text: str = Field(default="", description="Extracted resume text")
+    page_count: int = Field(default=1, description="Total pages parsed")
+    tables: List[Dict[str, Any]] = Field(default_factory=list, description="Extracted table structures")
+    file_type: str = Field(default="pdf", description="File extension ('pdf' | 'docx')")
+
+
+class RedactPIIResponse(BaseModel):
+    """Module 2 Output Schema."""
+    clean_text: str = Field(default="", description="Sanitized resume text with sensitive entities masked")
+    detected_pii: List[Dict[str, Any]] = Field(default_factory=list, description="Detected sensitive entities")
+    extracted_skills: List[str] = Field(default_factory=list, description="Extracted technical/professional skills")
+    extracted_certifications: List[str] = Field(default_factory=list, description="Extracted certifications")
+
+
+class StarRewrite(BaseModel):
+    """Module 3 Compact STAR Rewrite."""
+    original: str = Field(..., description="Original weak bullet point")
+    improved_star: str = Field(..., description="Rewritten bullet in STAR format")
+    impact_metric: str = Field(..., description="Measurable metric added to bullet")
+
+
+class ATSAnalysisResult(BaseModel):
+    """Module 3 Output Schema."""
+    ats_score: int = Field(..., ge=0, le=100, description="Overall ATS score (0-100)")
+    strengths: List[str] = Field(default_factory=list, description="Key strengths identified")
+    weaknesses: List[str] = Field(default_factory=list, description="Identified areas for improvement")
+    star_rewrites: List[StarRewrite] = Field(default_factory=list, description="STAR bullet transformations")
+    format_issues: List[str] = Field(default_factory=list, description="Format warnings")
+
+
+class JDMatchResult(BaseModel):
+    """Module 4 Output Schema."""
+    match_percentage: float = Field(..., ge=0.0, le=100.0, description="Match percentage (0.0 to 100.0%)")
+    matched_skills: List[str] = Field(default_factory=list, description="Skills present in both JD and Resume")
+    missing_skills: List[str] = Field(default_factory=list, description="Required JD skills absent from Resume")
+    recommendations: List[str] = Field(default_factory=list, description="Actionable recommendations to bridge gap")
+    cosine_similarity: float = Field(default=0.0, ge=0.0, le=1.0, description="TF-IDF cosine similarity score")
+    skill_match_ratio: float = Field(default=0.0, ge=0.0, le=1.0, description="Ratio of matched skills to required skills")
+
+
+class MasterAnalyzeResponse(BaseModel):
+    """Master Gateway Response Schema for POST /api/analyze."""
+    doc_summary: Any = Field(..., description="Member 1 document summary or dict")
+    pii_summary: Any = Field(..., description="Member 2 PII summary or dict")
+    ats_analysis: Any = Field(..., description="Member 3 ATS evaluation or dict")
+    jd_match: JDMatchResult = Field(..., description="Member 4 JD matching result")
+
+    def __getitem__(self, item: str):
+        return getattr(self, item)
+
+    def __contains__(self, item: str):
+        return hasattr(self, item)
+
+
+class DirectJDMatchRequest(BaseModel):
+    """Request payload for direct testing of JD Matcher endpoint."""
+    clean_text: str
+    jd_text: str
+    resume_skills: List[str] = Field(default_factory=list)
+

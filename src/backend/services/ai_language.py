@@ -67,6 +67,13 @@ PII_TAG_MAP = {
     "DateTime": "[DATE]"
 }
 
+# =====================================================================
+# Pre-compiled Regex Patterns (Day 2 Performance Optimization)
+# =====================================================================
+EMAIL_PATTERN = re.compile(r'\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b')
+PHONE_PATTERN = re.compile(r'(?:\+?\d{1,4}[-.\s]?)?(?:\(?\d{2,5}\)?[-.\s]?)?\d{3,5}[-.\s]?\d{3,5}\b')
+SSN_PATTERN = re.compile(r'\b\d{3}-\d{2}-\d{4}\b')
+
 
 # =====================================================================
 # 3. Main Service Class
@@ -181,32 +188,39 @@ class AILanguageService:
     def _offline_fallback(self, raw_text: str) -> RedactPIIResponse:
         """
         Local regex-based fallback for testing without active Azure credentials.
-        Ensures local unit tests and downstream modules never crash.
+        Optimized on Day 2 with pre-compiled regexes for sub-millisecond execution.
         """
         clean_text = raw_text
         detected_pii: List[Dict[str, Any]] = []
 
-        # 1. Regex Mask Emails
-        email_pattern = r'[\w\.-]+@[\w\.-]+\.\w+'
-        for match in re.finditer(email_pattern, raw_text):
+        # 1. Mask Emails using pre-compiled pattern
+        for match in EMAIL_PATTERN.finditer(raw_text):
             detected_pii.append({
                 "type": "Email",
                 "text": match.group(),
                 "confidence": 0.99
             })
-        clean_text = re.sub(email_pattern, "[EMAIL]", clean_text)
+        clean_text = EMAIL_PATTERN.sub("[EMAIL]", clean_text)
 
-        # 2. Regex Mask Phone Numbers
-        phone_pattern = r'(\+?\d{1,4}[-.\s]?)?\(?\d{2,5}\)?[-.\s]?\d{3,5}[-.\s]?\d{3,5}'
-        for match in re.finditer(phone_pattern, raw_text):
+        # 2. Mask Phone Numbers (International & US formats)
+        for match in PHONE_PATTERN.finditer(raw_text):
             detected_pii.append({
                 "type": "PhoneNumber",
                 "text": match.group(),
                 "confidence": 0.95
             })
-        clean_text = re.sub(phone_pattern, "[PHONE]", clean_text)
+        clean_text = PHONE_PATTERN.sub("[PHONE]", clean_text)
 
-        # 3. Common Skill Dictionary Matching
+        # 3. Mask SSNs
+        for match in SSN_PATTERN.finditer(raw_text):
+            detected_pii.append({
+                "type": "USSocialSecurityNumber",
+                "text": match.group(),
+                "confidence": 0.99
+            })
+        clean_text = SSN_PATTERN.sub("[SSN]", clean_text)
+
+        # 4. Common Skill Dictionary Matching
         common_skills = [
             "Python", "FastAPI", "Docker", "SQL", "Azure", "Git", 
             "React", "JavaScript", "TypeScript", "Machine Learning", 
@@ -217,7 +231,7 @@ class AILanguageService:
             if re.search(rf"\b{re.escape(skill)}\b", raw_text, re.IGNORECASE)
         ]
 
-        # 4. Common Certification Matching
+        # 5. Common Certification Matching
         common_certs = [
             "AWS Certified", "Azure AI-103", "Azure Fundamentals", 
             "PMP", "Scrum Master", "CKA", "GCP Professional"
@@ -233,3 +247,4 @@ class AILanguageService:
             extracted_skills=sorted(extracted_skills),
             extracted_certifications=sorted(extracted_certs)
         )
+
