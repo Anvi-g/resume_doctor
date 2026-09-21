@@ -69,8 +69,8 @@
 ### 1. Backend Setup & Run
 ```bash
 # Clone repository
-git clone <repo-url>
-cd azure_ai_103
+git clone https://github.com/Anvi-g/resume_doctor.git
+cd resume_doctor
 
 # Create and activate virtual environment
 python -m venv venv
