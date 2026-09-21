@@ -202,12 +202,14 @@ class MasterAnalyzeResponse(BaseModel):
     pii_summary: Any = Field(..., description="Member 2 PII summary or dict")
     ats_analysis: Any = Field(..., description="Member 3 ATS evaluation or dict")
     jd_match: JDMatchResult = Field(..., description="Member 4 JD matching result")
+    star_bullet_rewrites: Any = Field(default_factory=dict, description="STAR bullet rewrites batch output")
 
     def __getitem__(self, item: str):
         return getattr(self, item)
 
     def __contains__(self, item: str):
         return hasattr(self, item)
+
 
 
 class DirectJDMatchRequest(BaseModel):
