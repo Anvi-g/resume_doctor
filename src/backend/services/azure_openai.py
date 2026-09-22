@@ -13,11 +13,14 @@ Key Capabilities:
 
 import os               # Standard library OS module for accessing environment variables
 import re               # Regular expression library for text cleaning
+import json             # Standard library JSON module
 import logging          # Standard library logging module for recording events and errors
 import asyncio          # Standard library asyncio module for asynchronous event loop operations
 from typing import List, Optional, Dict, Any  # Type hinting annotations
 from dotenv import load_dotenv               # Load environment variables from .env file
 
+from azure.ai.projects import AIProjectClient
+from azure.identity import DefaultAzureCredential
 
 # Import AzureChatOpenAI client from langchain_openai package
 from langchain_openai import AzureChatOpenAI
@@ -58,31 +61,25 @@ class AzureOpenAIService:
         request_timeout: int = 30,              # API HTTP request timeout in seconds
         max_retries: int = 2,                   # Number of automated retry attempts on failure
     ):
-        # Resolve endpoint from argument if passed, else environment variable AZURE_OPENAI_ENDPOINT
         self.endpoint = endpoint if endpoint is not None else os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
-        
-        # Resolve API key from argument if passed, else environment variable AZURE_OPENAI_KEY
         self.api_key = api_key if api_key is not None else os.getenv("AZURE_OPENAI_KEY", "").strip()
-        
-        # Resolve deployment name (default to gpt-4o)
         self.deployment_name = (
             deployment_name
             or os.getenv("AZURE_OPENAI_DEPLOYMENT_NAME", "gpt-4o").strip()
         )
-        
-        # Resolve API version (default to 2024-02-15-preview)
         self.api_version = (
             api_version
             or os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview").strip()
         )
+        self.project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT", "").strip()
+        self.project_model = os.getenv("AZURE_AI_MODEL_DEPLOYMENT_NAME", self.deployment_name).strip()
         
         self.temperature = temperature      # Store temperature setting
         self.request_timeout = request_timeout # Store timeout setting
         self.max_retries = max_retries      # Store max retries setting
 
-        # Determine if offline mock mode should be enabled (force_mock flag or missing/placeholder credentials)
-        force_mock = os.getenv("MOCK_AZURE_OPENAI", "false").lower() in ("true", "1")
-        has_credentials = (
+        force_mock = os.getenv("MOCK_AZURE_OPENAI", "false").lower() in ("true", "1") or os.getenv("FORCE_OFFLINE", "0").lower() in ("true", "1")
+        has_credentials = bool(self.project_endpoint) or (
             bool(self.endpoint)
             and bool(self.api_key)
             and "your_" not in self.api_key.lower()
@@ -90,139 +87,280 @@ class AzureOpenAIService:
         )
         self.is_mock_mode = force_mock or not has_credentials
 
-        self.llm = None  # Holds AzureChatOpenAI instance
+        self.foundry_client = None
+        self.llm = None
+
         if not self.is_mock_mode:
-            try:
-                # Instantiate AzureChatOpenAI client using LangChain
-                self.llm = AzureChatOpenAI(
-                    azure_endpoint=self.endpoint,
-                    azure_deployment=self.deployment_name,
-                    api_key=self.api_key,
-                    api_version=self.api_version,
-                    temperature=self.temperature,
-                    timeout=self.request_timeout,
-                    max_retries=self.max_retries,
-                )
-                logger.info(f"AzureChatOpenAI initialized successfully with deployment '{self.deployment_name}'.")
-            except Exception as e:
-                # Log warning and switch to mock mode on initialization error
-                logger.warning(f"Failed to initialize AzureChatOpenAI client ({e}). Switching to fallback mode.")
+            # 1. Try Azure AI Foundry Project Client
+            if self.project_endpoint:
+                try:
+                    p_client = AIProjectClient(
+                        endpoint=self.project_endpoint,
+                        credential=DefaultAzureCredential(),
+                        allow_preview=True
+                    )
+                    self.foundry_client = p_client.get_openai_client()
+                    logger.info(f"Foundry OpenAI client initialized successfully with model '{self.project_model}'.")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize Foundry OpenAI client ({e}).")
+
+            # 2. Try standalone AzureChatOpenAI if endpoint & key are valid
+            if bool(self.endpoint) and bool(self.api_key) and "your_" not in self.api_key.lower():
+                try:
+                    self.llm = AzureChatOpenAI(
+                        azure_endpoint=self.endpoint,
+                        azure_deployment=self.deployment_name,
+                        api_key=self.api_key,
+                        api_version=self.api_version,
+                        temperature=self.temperature,
+                        timeout=self.request_timeout,
+                        max_retries=self.max_retries,
+                    )
+                    logger.info(f"AzureChatOpenAI initialized successfully with deployment '{self.deployment_name}'.")
+                except Exception as e:
+                    logger.warning(f"Failed to initialize AzureChatOpenAI client ({e}).")
+
+            if not self.foundry_client and not self.llm:
+                logger.warning("No active LLM client could be initialized. Falling back to mock mode.")
                 self.is_mock_mode = True
         else:
             logger.info("AzureOpenAIService running in Mock / Offline mode.")
 
+    @staticmethod
+    def _sanitize_ats_data(data: dict) -> dict:
+        if not isinstance(data, dict):
+            data = {}
+        
+        strengths = data.get("strengths") or []
+        if not isinstance(strengths, list):
+            strengths = [str(strengths)]
+            
+        improvements = data.get("improvements") or data.get("weaknesses") or data.get("recommendations") or []
+        if not isinstance(improvements, list):
+            improvements = [str(improvements)]
+            
+        missing_keywords = data.get("missing_keywords") or []
+        if not isinstance(missing_keywords, list):
+            missing_keywords = [str(missing_keywords)]
+
+        summary_feedback = str(data.get("summary_feedback") or "Resume audit complete.")
+
+        def _clamp(val, min_val, max_val, default):
+            try:
+                if val is None:
+                    return default
+                return max(min_val, min(max_val, int(val)))
+            except (ValueError, TypeError):
+                return default
+
+        formatting_score = _clamp(data.get("formatting_score"), 0, 20, 15)
+        keywords_score = _clamp(data.get("keywords_score"), 0, 25, 18)
+        sections_score = _clamp(data.get("sections_score"), 0, 15, 12)
+        action_verbs_score = _clamp(data.get("action_verbs_score"), 0, 20, 15)
+        impact_score = _clamp(data.get("impact_score"), 0, 20, 14)
+        
+        overall_score = data.get("overall_score")
+        if overall_score is None:
+            overall_score = formatting_score + keywords_score + sections_score + action_verbs_score + impact_score
+        overall_score = _clamp(overall_score, 0, 100, 75)
+
+        return {
+            "overall_score": overall_score,
+            "formatting_score": formatting_score,
+            "keywords_score": keywords_score,
+            "sections_score": sections_score,
+            "action_verbs_score": action_verbs_score,
+            "impact_score": impact_score,
+            "summary_feedback": summary_feedback,
+            "strengths": [str(s) for s in strengths if s],
+            "improvements": [str(i) for i in improvements if i],
+            "missing_keywords": [str(k) for k in missing_keywords if k],
+        }
+
+    @staticmethod
+    def _sanitize_star_data(data: dict) -> dict:
+        if not isinstance(data, dict):
+            data = {}
+        raw_rewrites = data.get("rewrites") or data.get("star_rewrites") or []
+        if not isinstance(raw_rewrites, list):
+            raw_rewrites = []
+
+        clean_rewrites = []
+        for item in raw_rewrites:
+            if isinstance(item, dict):
+                orig = str(item.get("original_bullet") or item.get("original") or item.get("original_text") or "Original experience bullet")
+                rewritten = str(item.get("rewritten_bullet") or item.get("improved_star") or item.get("rewritten") or orig)
+                metrics = item.get("metrics_added") or []
+                if not isinstance(metrics, list):
+                    metrics = [str(metrics)]
+                notes = item.get("improvement_notes") or item.get("notes") or ""
+                clean_rewrites.append({
+                    "original_bullet": orig,
+                    "rewritten_bullet": rewritten,
+                    "situation_task": str(item.get("situation_task")) if item.get("situation_task") else None,
+                    "action": str(item.get("action")) if item.get("action") else None,
+                    "result": str(item.get("result")) if item.get("result") else None,
+                    "metrics_added": [str(m) for m in metrics if m],
+                    "improvement_notes": str(notes) if notes else None,
+                })
+        
+        summary = str(data.get("overall_summary") or "STAR bullet transformations generated successfully.")
+        return {
+            "rewrites": clean_rewrites,
+            "overall_summary": summary,
+        }
+
+    def _call_foundry_ats(self, resume_text: str, target_jd: str = "") -> ATSScoreOutput:
+        sys_prompt = (
+            "You are an expert ATS recruiter auditing a resume against a target job description.\n"
+            "Analyze the resume text and return a valid JSON object matching this schema:\n"
+            "{\n"
+            '  "overall_score": int (0-100),\n'
+            '  "formatting_score": int (0-20),\n'
+            '  "keywords_score": int (0-25),\n'
+            '  "sections_score": int (0-15),\n'
+            '  "action_verbs_score": int (0-20),\n'
+            '  "impact_score": int (0-20),\n'
+            '  "summary_feedback": string,\n'
+            '  "strengths": list of detailed specific strings,\n'
+            '  "improvements": list of detailed specific actionable recommendation strings,\n'
+            '  "missing_keywords": list of strings\n'
+            "}"
+        )
+        user_prompt = f"RESUME:\n{resume_text}\n\nTARGET JOB DESCRIPTION:\n{target_jd or 'General Technical Role'}"
+        res = self.foundry_client.chat.completions.create(
+            model=self.project_model,
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+        data = json.loads(res.choices[0].message.content)
+        sanitized = self._sanitize_ats_data(data)
+        return ATSScoreOutput.model_validate(sanitized)
+
+    def _call_foundry_star(self, bullet_points: List[str], target_jd: str = "") -> STARRewriteBatchOutput:
+        sys_prompt = (
+            "You are an expert ATS recruiter. Convert generic bullet points into STAR-formatted (Situation, Task, Action, Result) "
+            "bullet points with quantified impact metrics.\n"
+            "Return a JSON object matching this schema:\n"
+            "{\n"
+            '  "rewrites": [\n'
+            "    {\n"
+            '      "original_bullet": string,\n'
+            '      "rewritten_bullet": string,\n'
+            '      "metrics_added": list of strings,\n'
+            '      "improvement_notes": string\n'
+            "    }\n"
+            "  ],\n"
+            '  "overall_summary": string\n'
+            "}"
+        )
+        user_prompt = f"Target Role/JD:\n{target_jd or 'General Technical Role'}\n\nBullets to rewrite:\n" + "\n".join(f"- {b}" for b in bullet_points)
+        res = self.foundry_client.chat.completions.create(
+            model=self.project_model,
+            messages=[
+                {"role": "system", "content": sys_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            response_format={"type": "json_object"}
+        )
+        data = json.loads(res.choices[0].message.content)
+        sanitized = self._sanitize_star_data(data)
+        return STARRewriteBatchOutput.model_validate(sanitized)
+
     def analyze_ats(self, resume_text: str, target_jd: str = "") -> ATSScoreOutput:
-        """
-        Synchronous ATS scoring analysis method.
-        """
-        # Return deterministic mock response if mock mode is active or LLM is uninitialized
-        if self.is_mock_mode or not self.llm:
+        if self.is_mock_mode:
             return self._generate_mock_ats_score(resume_text, target_jd)
 
-        try:
-            # Bind structured Pydantic output model ATSScoreOutput to the LLM
-            structured_llm = self.llm.with_structured_output(ATSScoreOutput)
-            # Combine prompt template and structured LLM using LangChain Runnable Sequence (pipe operator)
-            chain = ATS_SCORING_PROMPT_TEMPLATE | structured_llm
-            # Execute chain synchronously with input variables
-            result: ATSScoreOutput = chain.invoke({
-                "resume_text": resume_text,
-                "target_jd": target_jd or "General Technical Role",
-            })
-            return result
-        except Exception as e:
-            # Catch API errors, log exception, and fallback gracefully
-            logger.error(f"Error during Azure OpenAI ATS scoring invocation: {e}")
-            return self._generate_mock_ats_score(resume_text, target_jd)
+        if self.foundry_client:
+            try:
+                return self._call_foundry_ats(resume_text, target_jd)
+            except Exception as e:
+                logger.error(f"Foundry ATS scoring invocation failed ({e}). Trying fallback LLM...")
+
+        if self.llm:
+            try:
+                structured_llm = self.llm.with_structured_output(ATSScoreOutput)
+                chain = ATS_SCORING_PROMPT_TEMPLATE | structured_llm
+                return chain.invoke({"resume_text": resume_text, "target_jd": target_jd or "General Technical Role"})
+            except Exception as e:
+                logger.error(f"Error during Azure OpenAI ATS scoring invocation: {e}")
+
+        return self._generate_mock_ats_score(resume_text, target_jd)
 
     async def async_analyze_ats(self, resume_text: str, target_jd: str = "") -> ATSScoreOutput:
-        """
-        Asynchronous ATS scoring analysis method for FastAPI async route execution.
-        """
-        # Return deterministic mock response if mock mode is active
-        if self.is_mock_mode or not self.llm:
+        if self.is_mock_mode:
             return self._generate_mock_ats_score(resume_text, target_jd)
 
-        try:
-            # Bind structured output model ATSScoreOutput
-            structured_llm = self.llm.with_structured_output(ATSScoreOutput)
-            # Create LangChain Runnable Sequence
-            chain = ATS_SCORING_PROMPT_TEMPLATE | structured_llm
-            # Execute chain asynchronously using ainvoke
-            result: ATSScoreOutput = await chain.ainvoke({
-                "resume_text": resume_text,
-                "target_jd": target_jd or "General Technical Role",
-            })
-            return result
-        except Exception as e:
-            logger.error(f"Error during async Azure OpenAI ATS scoring invocation: {e}")
-            return self._generate_mock_ats_score(resume_text, target_jd)
+        if self.foundry_client:
+            try:
+                return await asyncio.to_thread(self._call_foundry_ats, resume_text, target_jd)
+            except Exception as e:
+                logger.error(f"Foundry async ATS scoring invocation failed ({e}). Trying fallback LLM...")
+
+        if self.llm:
+            try:
+                structured_llm = self.llm.with_structured_output(ATSScoreOutput)
+                chain = ATS_SCORING_PROMPT_TEMPLATE | structured_llm
+                return await chain.ainvoke({"resume_text": resume_text, "target_jd": target_jd or "General Technical Role"})
+            except Exception as e:
+                logger.error(f"Error during async Azure OpenAI ATS scoring invocation: {e}")
+
+        return self._generate_mock_ats_score(resume_text, target_jd)
 
     def rewrite_star_bullets(
         self, bullet_points: List[str], target_jd: str = ""
     ) -> STARRewriteBatchOutput:
-        """
-        Synchronous STAR bullet point rewriting method.
-        """
-        # Guard clause for empty bullet list
         if not bullet_points:
-            return STARRewriteBatchOutput(
-                rewrites=[],
-                overall_summary="No bullet points were provided for rewriting."
-            )
+            return STARRewriteBatchOutput(rewrites=[], overall_summary="No bullet points were provided for rewriting.")
 
-        # Return mock rewrites if mock mode is enabled
-        if self.is_mock_mode or not self.llm:
+        if self.is_mock_mode:
             return self._generate_mock_star_rewrites(bullet_points, target_jd)
 
-        try:
-            # Format list of bullets into newline-delimited text
-            bullet_text = "\n".join([f"- {b}" for b in bullet_points])
-            # Bind structured Pydantic model STARRewriteBatchOutput
-            structured_llm = self.llm.with_structured_output(STARRewriteBatchOutput)
-            # Create LangChain Runnable Sequence
-            chain = STAR_REWRITE_PROMPT_TEMPLATE | structured_llm
-            # Execute chain synchronously
-            result: STARRewriteBatchOutput = chain.invoke({
-                "bullet_points_text": bullet_text,
-                "target_jd": target_jd or "General Technical Role",
-            })
-            return result
-        except Exception as e:
-            logger.error(f"Error during Azure OpenAI STAR rewrite invocation: {e}")
-            return self._generate_mock_star_rewrites(bullet_points, target_jd)
+        if self.foundry_client:
+            try:
+                return self._call_foundry_star(bullet_points, target_jd)
+            except Exception as e:
+                logger.error(f"Foundry STAR rewrite invocation failed ({e}). Trying fallback LLM...")
+
+        if self.llm:
+            try:
+                bullet_text = "\n".join([f"- {b}" for b in bullet_points])
+                structured_llm = self.llm.with_structured_output(STARRewriteBatchOutput)
+                chain = STAR_REWRITE_PROMPT_TEMPLATE | structured_llm
+                return chain.invoke({"bullet_points_text": bullet_text, "target_jd": target_jd or "General Technical Role"})
+            except Exception as e:
+                logger.error(f"Error during Azure OpenAI STAR rewrite invocation: {e}")
+
+        return self._generate_mock_star_rewrites(bullet_points, target_jd)
 
     async def async_rewrite_star_bullets(
         self, bullet_points: List[str], target_jd: str = ""
     ) -> STARRewriteBatchOutput:
-        """
-        Asynchronous STAR bullet point rewriting method for FastAPI async route execution.
-        """
         if not bullet_points:
-            return STARRewriteBatchOutput(
-                rewrites=[],
-                overall_summary="No bullet points were provided for rewriting."
-            )
+            return STARRewriteBatchOutput(rewrites=[], overall_summary="No bullet points were provided for rewriting.")
 
-        if self.is_mock_mode or not self.llm:
+        if self.is_mock_mode:
             return self._generate_mock_star_rewrites(bullet_points, target_jd)
 
-        try:
-            # Format bullets into string
-            bullet_text = "\n".join([f"- {b}" for b in bullet_points])
-            # Bind structured model
-            structured_llm = self.llm.with_structured_output(STARRewriteBatchOutput)
-            # Create sequence
-            chain = STAR_REWRITE_PROMPT_TEMPLATE | structured_llm
-            # Execute chain asynchronously
-            result: STARRewriteBatchOutput = await chain.ainvoke({
-                "bullet_points_text": bullet_text,
-                "target_jd": target_jd or "General Technical Role",
-            })
-            return result
-        except Exception as e:
-            logger.error(f"Error during async Azure OpenAI STAR rewrite invocation: {e}")
-            return self._generate_mock_star_rewrites(bullet_points, target_jd)
+        if self.foundry_client:
+            try:
+                return await asyncio.to_thread(self._call_foundry_star, bullet_points, target_jd)
+            except Exception as e:
+                logger.error(f"Foundry async STAR rewrite invocation failed ({e}). Trying fallback LLM...")
+
+        if self.llm:
+            try:
+                bullet_text = "\n".join([f"- {b}" for b in bullet_points])
+                structured_llm = self.llm.with_structured_output(STARRewriteBatchOutput)
+                chain = STAR_REWRITE_PROMPT_TEMPLATE | structured_llm
+                return await chain.ainvoke({"bullet_points_text": bullet_text, "target_jd": target_jd or "General Technical Role"})
+            except Exception as e:
+                logger.error(f"Error during async Azure OpenAI STAR rewrite invocation: {e}")
+
+        return self._generate_mock_star_rewrites(bullet_points, target_jd)
 
     # ============================================================================
     # Fallback Deterministic Engine for Offline / Mock Mode

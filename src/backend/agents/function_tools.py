@@ -127,6 +127,7 @@ def tool_score_ats(args: Dict[str, Any], ctx: ToolContext) -> Dict[str, Any]:
     out = ats.model_dump()
     out["star_rewrites"] = star_rewrites
     out["ats_score"] = out.get("overall_score", 0)
+    out["weaknesses"] = out.get("improvements", [])
     return out
 
 
