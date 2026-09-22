@@ -21,6 +21,27 @@ call, in which order, and assembles the final `MasterAnalyzeResponse`.
 Resume bytes live on a per-request `ToolContext` (the agent passes only JSON args,
 so tools receive the filename; offline mock always works with zero Azure keys).
 
+## Demo & Screenshots
+
+### Dashboard Preview
+![Resume Doctor Dashboard](docs/assets/dashboard.png)
+
+### Video Demos
+
+<details>
+<summary>🎥 <b>Watch Resume Audit Demo (Part 1)</b></summary>
+
+<video src="docs/assets/resume_analysis.mp4" controls width="100%"></video>
+
+</details>
+
+<details>
+<summary>🎥 <b>Watch Resume Audit Demo (Part 2)</b></summary>
+
+<video src="docs/assets/resume_analysis2.mp4" controls width="100%"></video>
+
+</details>
+
 ## Repo Layout
 
 | Path | Purpose |
