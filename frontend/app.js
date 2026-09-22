@@ -1,4 +1,5 @@
 const API_URL = 'http://localhost:8000/api/analyze';
+const HEALTH_URL = 'http://localhost:8000/api/health';
 const form = document.querySelector('#analysis-form');
 const fileInput = document.querySelector('#resume-file');
 const dropZone = document.querySelector('#drop-zone');
@@ -7,6 +8,27 @@ const fileMeta = document.querySelector('#file-meta');
 const button = document.querySelector('#analyze-button');
 const errorMessage = document.querySelector('#form-error');
 const results = document.querySelector('#results');
+const statusBadge = document.querySelector('#status-badge');
+
+async function updateBackendStatus() {
+  if (!statusBadge) return;
+  try {
+    const res = await fetch(HEALTH_URL);
+    if (!res.ok) return;
+    const data = await res.json();
+    const mode = data.agentic?.mode;
+    if (mode === 'agent_service') {
+      statusBadge.innerHTML = '<span class="status-dot"></span> AZURE AI FOUNDRY';
+    } else if (mode === 'responses') {
+      statusBadge.innerHTML = '<span class="status-dot"></span> AZURE OPENAI RESPONSES';
+    } else {
+      statusBadge.innerHTML = '<span class="status-dot"></span> LOCAL WORKSPACE';
+    }
+  } catch (e) {
+    // Keep default static text if server is offline
+  }
+}
+updateBackendStatus();
 
 function chooseFile(file) {
   if (!file) return;

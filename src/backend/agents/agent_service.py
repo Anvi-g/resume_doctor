@@ -198,13 +198,16 @@ class ResumeDoctorAgentService:
         self.last_run_trace = []
         self.last_agent_summary = ""
 
-        response = self._openai_client.responses.create(
-            model=self.model,
-            instructions=SUPERVISOR_INSTRUCTIONS,
-            input=[{"role": "user", "content": user_prompt}],
-            tools=tool_specs,
-            parallel_tool_calls=False,
-        )
+        create_kwargs: Dict[str, Any] = {
+            "model": self.model,
+            "input": [{"role": "user", "content": user_prompt}],
+            "parallel_tool_calls": False,
+        }
+        if self.mode != "agent_service":
+            create_kwargs["instructions"] = SUPERVISOR_INSTRUCTIONS
+            create_kwargs["tools"] = tool_specs
+
+        response = self._openai_client.responses.create(**create_kwargs)
         previous_response_id = response.id
         tool_outputs: Dict[str, Dict[str, Any]] = {}
 
