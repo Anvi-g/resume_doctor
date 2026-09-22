@@ -30,10 +30,13 @@ so tools receive the filename; offline mock always works with zero Azure keys).
 
 ![Resume Doctor Dashboard - Audit & Analysis Results](docs/assets/2.png)
 
-### Live Demo Animations
-![Resume Analysis Demo Part 1](docs/assets/resume_analysis.gif)
+### Live Demo Animations (Sample Resume Audits)
 
-![Resume Analysis Demo Part 2](docs/assets/resume_analysis2.gif)
+#### Sample Resume Audit 1
+![Resume Analysis Output - Sample Resume 1](docs/assets/resume_analysis.gif)
+
+#### Sample Resume Audit 2
+![Resume Analysis Output - Sample Resume 2](docs/assets/resume_analysis2.gif)
 
 ---
 
