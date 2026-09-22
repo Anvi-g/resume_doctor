@@ -179,7 +179,13 @@ export default function App() {
           {healthStatus && (
             <div className="health-badge">
               <span className="status-dot"></span>
-              <span className="status-text">{healthStatus.status || 'API Connected'}</span>
+              <span className="status-text">
+                {healthStatus.agentic?.mode === 'agent_service'
+                  ? 'AZURE AI FOUNDRY'
+                  : healthStatus.agentic?.mode === 'responses'
+                  ? 'AZURE OPENAI RESPONSES'  
+                  : healthStatus.status || 'API Connected'}
+              </span>
             </div>
           )}
         </div>
