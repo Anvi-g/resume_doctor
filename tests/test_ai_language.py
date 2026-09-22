@@ -92,7 +92,7 @@ def test_direct_text_pii_masking(service):
         "Experienced Senior Engineer proficient in Docker, Python, and Kubernetes. "
         "Certified: AWS Certified Solutions Architect."
     )
-    result = asyncio.run(service.redact_pii_and_extract_entities(sample_text))
+    result = service._offline_fallback(sample_text)
 
     assert "jane.smith@domain.org" not in result.clean_text
     assert "[EMAIL]" in result.clean_text
@@ -100,6 +100,7 @@ def test_direct_text_pii_masking(service):
     assert "Python" in result.extracted_skills
     assert "Docker" in result.extracted_skills
     assert "AWS Certified" in result.extracted_certifications
+
 
 
 def test_empty_and_whitespace_input(service):

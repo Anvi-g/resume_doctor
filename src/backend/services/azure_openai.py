@@ -12,10 +12,12 @@ Key Capabilities:
 """
 
 import os               # Standard library OS module for accessing environment variables
+import re               # Regular expression library for text cleaning
 import logging          # Standard library logging module for recording events and errors
 import asyncio          # Standard library asyncio module for asynchronous event loop operations
 from typing import List, Optional, Dict, Any  # Type hinting annotations
 from dotenv import load_dotenv               # Load environment variables from .env file
+
 
 # Import AzureChatOpenAI client from langchain_openai package
 from langchain_openai import AzureChatOpenAI
@@ -56,11 +58,11 @@ class AzureOpenAIService:
         request_timeout: int = 30,              # API HTTP request timeout in seconds
         max_retries: int = 2,                   # Number of automated retry attempts on failure
     ):
-        # Resolve endpoint from argument or environment variable AZURE_OPENAI_ENDPOINT
-        self.endpoint = endpoint or os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
+        # Resolve endpoint from argument if passed, else environment variable AZURE_OPENAI_ENDPOINT
+        self.endpoint = endpoint if endpoint is not None else os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
         
-        # Resolve API key from argument or environment variable AZURE_OPENAI_KEY
-        self.api_key = api_key or os.getenv("AZURE_OPENAI_KEY", "").strip()
+        # Resolve API key from argument if passed, else environment variable AZURE_OPENAI_KEY
+        self.api_key = api_key if api_key is not None else os.getenv("AZURE_OPENAI_KEY", "").strip()
         
         # Resolve deployment name (default to gpt-4o)
         self.deployment_name = (
@@ -263,39 +265,164 @@ class AzureOpenAIService:
             missing_keywords=["CI/CD", "Kubernetes", "Azure OpenAI", "Microservices Architecture"]
         )
 
+    _WEAK_VERB_LEADS = {
+        "built": "Engineered",
+        "develop": "Engineered",
+        "developed": "Engineered",
+        "created": "Architected",
+        "made": "Delivered",
+        "worked": "Spearheaded",
+        "helped": "Streamlined",
+        "used": "Leveraged",
+        "implemented": "Automated",
+        "wrote": "Automated",
+        "designed": "Architected",
+        "reduced": "Cut",
+        "improved": "Enhanced",
+        "increased": "Scaled",
+        "optimized": "Optimized",
+    }
+
+    @staticmethod
+    def _pick_action_verb(text_lower: str) -> str:
+        if any(k in text_lower for k in ("ml", "inference", "model", "prediction", "vision", "nlp", " ai")):
+            return "Optimized"
+        if any(k in text_lower for k in ("api", "backend", "endpoint", "fastapi", "microservice", "service")):
+            return "Architected"
+        if any(k in text_lower for k in ("pipeline", "data", "parquet", "csv", "storage", "database", "sql", "etl", "batch")):
+            return "Engineered"
+        if any(k in text_lower for k in ("automate", "script", "bash", "deploy", "ci/", "workflow")):
+            return "Automated"
+        if any(k in text_lower for k in ("edge", "security", "biometric", "device", "embedded")):
+            return "Designed"
+        return "Spearheaded"
+
+    @staticmethod
+    def _outcome_clause(text_lower: str) -> str:
+        if any(k in text_lower for k in ("pipeline", "data", "parquet", "csv", "storage", "database", "sql", "etl")):
+            return "keeping downstream systems query-ready and reliable"
+        if any(k in text_lower for k in ("api", "backend", "endpoint", "fastapi", "microservice", "service")):
+            return "keeping client workflows fast and dependable"
+        if any(k in text_lower for k in ("ml", "inference", "model", "prediction", " ai")):
+            return "keeping model outputs consistent and production-tuned"
+        if any(k in text_lower for k in ("automate", "script", "bash", "deploy", "ci/", "workflow")):
+            return "removing repetitive manual steps from the delivery loop"
+        if any(k in text_lower for k in ("edge", "security", "biometric", "device", "embedded")):
+            return "with reliability and privacy preserved"
+        return ""
+
+    def _mock_rewrap_bullet(self, clean_text: str, matched_metric: Any):
+        """Deterministic STAR reframe: replace the lead verb, never invent metrics."""
+        text = clean_text.strip().rstrip(".")
+        if not text:
+            return clean_text, "", []
+        lower = text.lower()
+        action_verb = self._pick_action_verb(lower)
+
+        teamed = re.match(
+            r"^(?:worked|helped)\s+with\s+(?:the\s+)?(?:team|group|others|colleagues)?\s*to\s+(.+)$",
+            text,
+            re.IGNORECASE,
+        )
+        if teamed and not matched_metric:
+            rewritten = f"Led the team to {teamed.group(1)}".strip()
+            clause = self._outcome_clause(lower)
+            if clause:
+                rewritten = f"{rewritten}, {clause}."
+            else:
+                rewritten = f"{rewritten}."
+            result_statement = (
+                "Strengthened the action lead and result framing without introducing any unverifiable numbers."
+            )
+            return rewritten, result_statement, []
+
+        head, sep, tail = text.partition(" ")
+        if sep:
+            lead = head.lower()
+            if lead in self._WEAK_VERB_LEADS:
+                rewritten = f"{self._WEAK_VERB_LEADS[lead]} {tail}"
+            else:
+                rewritten = f"{action_verb} {head[0].lower() if head else ''}{head[1:]} {tail}"
+        else:
+            rewritten = f"{action_verb} {head.lower()}"
+
+        if matched_metric:
+            metrics = [matched_metric.group(0).strip()]
+            result_statement = (
+                "Preserved the concrete, verifiable performance evidence present in the original bullet verbatim."
+            )
+            return f"{rewritten}.".strip(), result_statement, metrics
+
+        clause = self._outcome_clause(lower)
+        if clause:
+            rewritten = f"{rewritten}, {clause}."
+        else:
+            rewritten = f"{rewritten}."
+        result_statement = (
+            "Strengthened the action lead and result framing without introducing any unverifiable numbers."
+        )
+        return rewritten, result_statement, []
+
     def _generate_mock_star_rewrites(self, bullet_points: List[str], target_jd: str) -> STARRewriteBatchOutput:
         """
-        Generates realistic STAR format rewrites using deterministic templates when Azure API keys are absent.
+        Generates STAR-formatted rewrites with deterministic, evidence-only reframing.
+
+        IMPORTANT: No metrics or percentages are ever invented. A bullet that already
+        contains a concrete, verifiable metric keeps it verbatim; a bullet without one
+        is reframed with a stronger action verb and STAR flow only, and reports no
+        metrics in ``metrics_added``.
         """
         rewrites: List[STARRewriteItem] = []
 
+        skip_keywords = [
+            "resume", "curriculum", "cv", "@", "email", "phone", "address", "location", "patiala", "punjab", "india",
+            "bachelor", "master", "phd", "degree", "university", "college", "school", "education", "skills", "summary",
+            "contact", "cgpa", "gpa", "b.tech", "m.tech", "b.e.", ":selected:", "coursework", "data structures"
+        ]
+
+        # Only picks up metrics that already exist in the source bullet (evidence-preserving).
+        metric_pattern = re.compile(
+            r"(\d+(?:\.\d+)?\s*%|Rs\.?\s?[\d,]+(?:,\d{3})*|\$\s?[\d,]+(?:,\d{3})*|"
+            r"[\d,]+(?:,\d{3})*\s+(?:users|requests|tickets|hours|days|bottlenecks|queries|APIs))"
+        )
+
         for bullet in bullet_points:
-            cleaned = bullet.strip().lstrip("-*• ")
-            if not cleaned:
+            cleaned = bullet.strip().lstrip("-*•·\t\r ")
+            if not cleaned or len(cleaned) < 10:
                 continue
 
-            verb = "Engineered" if any(kw in cleaned.lower() for kw in ["code", "built", "develop", "api", "python", "system", "data", "app", "model"]) else "Spearheaded"
-            rewritten = f"{verb} optimized implementation of '{cleaned}', increasing operational throughput by 35% and reducing execution latency."
-            s_t = f"Identified opportunity to enhance workflow efficiency for '{cleaned}'."
-            action = f"Deployed robust framework design and automated processing pipelines."
-            result = "Achieved 35% performance boost and improved system reliability."
-            metrics = ["35% efficiency boost", "Reduced execution latency"]
+            # Reject non-experience text
+            if re.search(r"\[(NAME|EMAIL|PHONE|ADDRESS|SSN|ORGANIZATION|LOCATION|PII)\]", cleaned, re.IGNORECASE) or re.search(r"\[[A-Z_]+\]", cleaned):
+                continue
+            if "|" in cleaned or ":selected:" in cleaned.lower():
+                continue
+            if any(sk in cleaned.lower() for sk in skip_keywords):
+                continue
+
+            clean_text = re.sub(r"\[(NAME|EMAIL|PHONE|ADDRESS|SSN|ORGANIZATION)\]", "", cleaned).strip(" :'\"")
+            if not clean_text or len(clean_text) < 8:
+                continue
+
+            matched_metric = metric_pattern.search(clean_text)
+
+            rewritten, result_statement, metrics = self._mock_rewrap_bullet(clean_text, matched_metric)
 
             rewrites.append(
                 STARRewriteItem(
                     original_bullet=cleaned,
                     rewritten_bullet=rewritten,
-                    situation_task=s_t,
-                    action=action,
-                    result=result,
+                    situation_task=f"Clarified the context and task behind: {clean_text}.",
+                    action="Led the action with a sharper, domain-aligned verb while keeping the original facts intact.",
+                    result=result_statement,
                     metrics_added=metrics,
-                    improvement_notes="Transformed into STAR format with strong action verb and quantifiable performance metric."
+                    improvement_notes=(
+                        "Reframed into the STAR formula. Only metrics already present in the original bullet were "
+                        "preserved; no random percentages or fabricated impact were added."
+                    ),
                 )
             )
 
-
-        # Return validated STARRewriteBatchOutput Pydantic object
         return STARRewriteBatchOutput(
             rewrites=rewrites,
-            overall_summary=f"Successfully transformed {len(rewrites)} bullet point(s) into executive STAR format with concrete impact metrics."
+            overall_summary=f"Transformed {len(rewrites)} bullet point(s) into STAR framing without fabricating metrics."
         )

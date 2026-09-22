@@ -11,12 +11,11 @@ This test suite covers:
 """
 
 import pytest                      # Pytest testing framework
+import re                          # Regex assertions for fabricated-metric checks
 from fastapi.testclient import TestClient # FastAPI TestClient for simulating HTTP requests
 
 # Import Member 3 Azure OpenAI Service from primary path
 from src.backend.services.azure_openai import AzureOpenAIService
-# Import Member 3 OpenAI ATS Service wrapper from alias path
-from backend.app.services.openai_ats import OpenAIATSService
 # Import Pydantic models for response schema assertions
 from src.backend.models.schemas import ATSScoreOutput, STARRewriteBatchOutput
 # Import FastAPI application instance
@@ -56,9 +55,11 @@ def test_azure_openai_init():
         endpoint="https://test.openai.azure.com/",
         api_key="test_key",
         deployment_name="gpt-4o",
+        api_version="2024-02-15-preview"
     )
     assert service.deployment_name == "gpt-4o"
     assert service.api_version == "2024-02-15-preview"
+
 
 
 def test_ats_scoring_sync(mock_service):
@@ -106,7 +107,8 @@ async def test_ats_scoring_async(mock_service):
 
 def test_star_bullet_rewrite_sync(mock_service):
     """
-    Test 4: Verify synchronous rewrite_star_bullets transforms raw bullet points into STAR format.
+    Test 4: Verify synchronous rewrite_star_bullets transforms raw bullet points into STAR format
+    WITHOUT fabricating metrics that are not present in the source bullet.
     """
     bullets = ["Built a website."]
     result = mock_service.rewrite_star_bullets(bullets)
@@ -115,9 +117,50 @@ def test_star_bullet_rewrite_sync(mock_service):
     assert len(result.rewrites) == 1
     item = result.rewrites[0]
     assert item.original_bullet == "Built a website."
-    assert "Django" in item.rewritten_bullet or "Engineered" in item.rewritten_bullet
-    assert len(item.metrics_added) > 0
+    assert "Django" in item.rewritten_bullet or "Engineered" in item.rewritten_bullet or "Spearheaded" in item.rewritten_bullet or "Developed" in item.rewritten_bullet or "Architected" in item.rewritten_bullet
+
+    # No metric in the source -> no metric may be invented (no %, $, numbers, or scales).
+    assert item.metrics_added == []
+    assert re.search(r"\d+\s*%", item.rewritten_bullet) is None
     assert len(item.improvement_notes) > 0
+
+
+def test_star_rewrite_preserves_existing_metric_only(mock_service):
+    """
+    Test 4b: Verify a metric already present in the source bullet is preserved verbatim,
+    and that no NEW fabricated metrics are introduced alongside it.
+    """
+    bullets = ["Reduced preprocessing latency by 40% with parallel workers."]
+    result = mock_service.rewrite_star_bullets(bullets)
+
+    item = result.rewrites[0]
+    assert "40%" in item.rewritten_bullet
+    assert "40%" in item.metrics_added[0]
+    # No other invented percentage is allowed.
+    numeric_metrics = re.findall(r"\d+\s*%", item.rewritten_bullet)
+    assert set(numeric_metrics) == {"40%"}
+
+
+def test_star_rewrite_is_real_rewrite_without_editorial_talk(mock_service):
+    """
+    Test 4c: A metric-less bullet must produce a genuinely rewritten STAR sentence
+    (different from the original, strong lead verb), never an echo of the source
+    or editorial instructions to the resume writer inside the rewritten text.
+    """
+    bullets = [
+        "Developed storage solutions to parse and transform high-volume data "
+        "into optimized CSV and Parquet formats."
+    ]
+    result = mock_service.rewrite_star_bullets(bullets)
+
+    item = result.rewrites[0]
+    assert item.rewritten_bullet != item.original_bullet
+    assert item.rewritten_bullet.startswith("Engineered")
+    assert " " in item.rewritten_bullet  # still a full sentence
+    assert "No metrics were invented" not in item.rewritten_bullet
+    assert "add real numbers" not in item.rewritten_bullet
+    assert "original delivery" not in item.rewritten_bullet
+    assert item.metrics_added == []
 
 
 @pytest.mark.asyncio
@@ -185,9 +228,9 @@ def test_fastapi_star_rewrite_endpoint(api_client):
 
 def test_backend_app_services_import_compatibility():
     """
-    Test 10: Verify OpenAIATSService alias class has identical methods and works seamlessly.
+    Test 10: Verify the primary AzureOpenAIService exposes the full Member 3 API.
     """
-    service = OpenAIATSService()
+    service = AzureOpenAIService()
     assert service is not None
     assert hasattr(service, "analyze_ats")
     assert hasattr(service, "rewrite_star_bullets")

@@ -1,13 +1,52 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>frontend</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Resume Doctor</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">RESUME <span>DOCTOR</span></a>
+    <div id="status-badge" class="status"><span class="status-dot"></span> LOCAL WORKSPACE</div>
+  </header>
+
+  <main class="shell">
+    <section class="intro">
+      <p class="eyebrow">AI-103 / CAREER INTELLIGENCE</p>
+      <h1>Make your resume<br><em>work harder.</em></h1>
+      <p class="lede">Upload a resume and a target role. Resume Doctor finds the signal, spots the gaps, and gives you a sharper next move.</p>
+    </section>
+
+    <form id="analysis-form" class="workspace">
+      <section class="panel intake-panel">
+        <div class="panel-heading">
+          <div><span class="step">01</span><h2>Drop your resume</h2></div>
+          <span class="file-types">PDF / DOCX / TXT</span>
+        </div>
+        <label id="drop-zone" class="drop-zone" for="resume-file">
+          <input id="resume-file" name="resume_file" type="file" accept=".pdf,.docx,.txt" required>
+          <span class="upload-mark">+</span>
+          <strong id="file-label">Choose a file or drop it here</strong>
+          <small id="file-meta">Your resume stays in this local session.</small>
+        </label>
+        <div class="fields">
+          <label>Target role <span>(optional)</span><input id="target-role" name="target_role" type="text" placeholder="e.g. Senior Python Engineer"></label>
+          <label>Job description <span>(optional)</span><textarea id="job-description" name="job_description" rows="5" placeholder="Paste the job description to get a tailored match analysis..."></textarea></label>
+        </div>
+        <button id="analyze-button" class="primary-button" type="submit"><span>Analyze resume</span><span class="button-arrow">↗</span></button>
+        <p id="form-error" class="form-error" role="alert"></p>
+      </section>
+
+      <section id="results" class="results" aria-live="polite">
+        <div class="empty-state"><span class="empty-number">02</span><h2>Your readout will land here.</h2><p>ATS score, role alignment, strengths, and specific improvements in one pass.</p></div>
+      </section>
+    </form>
+  </main>
+  <script src="app.js"></script>
+</body>
 </html>

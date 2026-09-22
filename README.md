@@ -1,157 +1,92 @@
-# Resume Doctor: Intelligent Resume Analyzer (Azure AI-103)
+# Resume Doctor — Agentic Edition (Azure AI-103)
 
-> **3-Day Ultra Sprint Master Project** | Target Completion: **September 18** | LMS Final Submission: **September 22**
+A genuinely **agentic** rewrite of the AI-103 "Resume Doctor" lab. Instead of a
+hand-wired Python pipeline (`asyncio.gather`), an **Azure AI Foundry Agent Service
+supervisor agent** decides at runtime which of the 4 module **worker functions** to
+call, in which order, and assembles the final `MasterAnalyzeResponse`.
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-3776AB?style=flat&logo=python&logoColor=white)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.100+-009688?style=flat&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
-[![React 19](https://img.shields.io/badge/React-19.0-61DAFB?style=flat&logo=react&logoColor=black)](https://react.dev/)
-[![Azure AI-103](https://img.shields.io/badge/Azure-AI--103_Services-0089D6?style=flat&logo=microsoftazure&logoColor=white)](https://azure.microsoft.com/)
-[![pytest](https://img.shields.io/badge/tests-40%20passed-10B981?style=flat&logo=pytest&logoColor=white)](https://docs.pytest.org/)
-
----
-
-## 📌 Executive Summary
-
-**Resume Doctor** is an enterprise-grade, multi-service resume auditing and job matching platform powered by **Azure AI-103 services**. Designed for high accuracy and zero-friction parallel development, it extracts document structure, redacts sensitive PII, calculates semantic ATS fit against target job descriptions, and transforms weak resume bullet points into quantifiable **STAR-format** statements.
-
----
-
-## 🏛️ System Architecture
-
-```text
-                               ┌─────────────────────────────────────────┐
-                               │           React Web UI Dashboard        │
-                               │        (Drag & Drop, Score Gauges)      │
-                               └────────────────────┬────────────────────┘
-                                                    │ POST /api/analyze
-                                                    ▼
-                               ┌─────────────────────────────────────────┐
-                               │       FastAPI Gateway Orchestrator      │
-                               │          (backend/app/main.py)          │
-                               └────────────────────┬────────────────────┘
-                                                    │
-        ┌───────────────────────────┬───────────────┴───────────────┬───────────────────────────┐
-        ▼                           ▼                               ▼                           ▼
-┌──────────────────────┐  ┌───────────────────┐           ┌───────────────────┐       ┌───────────────────┐
-│ Member 1: Doc Intel  │  │ Member 2: AI Lang │           │ Member 3: OpenAI  │       │ Member 4: JD      │
-│  (Layout & Tables)   │  │  (PII Masking)    │           │ (ATS & STAR Gen)  │       │ (TF-IDF Matcher)  │
-└──────────┬───────────┘  └─────────┬─────────┘           └─────────┬─────────┘       └─────────┬─────────┘
-           │                        │                               │                           │
-           └────────────────────────┴───────────────┬───────────────┴───────────────────────────┘
-                                                    │ asyncio.gather()
-                                                    ▼
-                               ┌─────────────────────────────────────────┐
-                               │          MasterAnalyzeResponse          │
-                               │  (Doc, PII, ATS Score, STAR, JD Match)  │
-                               └─────────────────────────────────────────┘
+```
+ ┌───────────────────────────────────────────────────────────────┐
+ │  Azure AI Foundry Agent Service (supervisor agent)            │
+ │  model: gpt-4.1-mini, name: resume-doctor                     │
+ │  decides tool call order itself at runtime                    │
+ └───────────────┬───────────────────────────────────────────────┘
+                 │  OpenAI Responses loop (function tools)
+        ┌────────┴────────┬──────────────┬───────────────┐
+        ▼                 ▼              ▼               ▼
+  parse_resume      redact_pii       score_ats       match_jd
+  (DocIntel)      (AI Language)   (Azure OpenAI)   (TF-IDF+Cosine)
 ```
 
----
+Resume bytes live on a per-request `ToolContext` (the agent passes only JSON args,
+so tools receive the filename; offline mock always works with zero Azure keys).
 
-## 👥 Equal Team Work Division Matrix (20% Each)
+## Repo layout
 
-| Member & Role | Technical Module Ownership | Key Responsibilities & Deliverables | 60s Video Segment |
-| :--- | :--- | :--- | :--- |
-| **Member 1** *(Team Lead)* | **Doc Intelligence & Orchestration** | • Azure Doc Intel layout & table parser<br/>• Local `pypdf` fallback parser<br/>• Master pipeline compilation & repo coordinator | **0:00 - 1:00**<br/>Intro, Project Overview, Problem Statement |
-| **Member 2** *(NLP Lead)* | **Azure AI Language & PII Redaction** | • Reverse-offset PII masking (`[NAME]`, `[EMAIL]`, `[PHONE]`)<br/>• NER skill & certification extraction<br/>• `docs/responsible_ai.md` privacy standards | **1:00 - 2:00**<br/>Azure AI-103 Architecture & Privacy Flow |
-| **Member 3** *(GenAI Lead)* | **Azure OpenAI ATS & STAR Rewriter** | • GPT-4o system prompt engineering<br/>• STAR format bullet rewrite engine (Situation, Task, Action, Result)<br/>• Validated Pydantic output schemas | **2:00 - 3:00**<br/>Live Demo Part 1 (Doc Upload, PII, ATS Score) |
-| **Member 4** *(Data Lead)* | **JD Matcher & Backend Gateway** | • TF-IDF vectorization & Cosine Similarity match algorithm<br/>• Skill gap matrix (% match, matched vs missing skills)<br/>• FastAPI `/api/analyze` gateway route & `asyncio.gather()` | **3:00 - 4:00**<br/>Live Demo Part 2 (JD Matcher & STAR Rewrites) |
-| **Member 5** *(Frontend Lead)* | **Interactive Web UI Dashboard** | • React/Vite dashboard UI<br/>• Animated score gauges & step progress indicators<br/>• Redacted PII toggle & copy-to-clipboard STAR cards | **4:00 - 5:00**<br/>Dashboard Demo, Responsible AI & Wrap-up |
+| Path | Purpose |
+|---|---|
+| `src/backend/agents/function_tools.py` | 4 module tool functions + OpenAI `FunctionTool` definitions + dispatcher |
+| `src/backend/agents/agent_service.py` | Supervisor-agent Responsive loop, 3-mode fallback, trace capture |
+| `src/backend/orchestrator.py` | Deterministic `MasterOrchestrator` — kept as the **offline fallback** |
+| `src/backend/app.py` | FastAPI gateway; `/api/analyze` now routes through the agent |
+| `tests/test_agent.py` | Agent loop harness (scripted, no network) + opt-in LIVE test |
 
----
+## Modes
 
-## 🚀 Quickstart Guide
+| Mode | Trigger | What runs |
+|---|---|---|
+| **agent_service** | `AZURE_AI_PROJECT_ENDPOINT` set, `FORCE_OFFLINE=0` | Foundry agent service + Responses function-tool loop |
+| **responses** (stateless) | agent platform fails at runtime | `get_openai_client()` + tools passed per request |
+| **offline** | endpoint unset or `FORCE_OFFLINE=1` | `MasterOrchestrator` (deterministic, no Azure needed) |
 
-### Prerequisites
-- **Python**: `3.10+`
-- **Node.js**: `v18+` (npm `v9+`)
+`GET /api/agent/trace` returns the last run's tool-call order + agent summary
+(useful for the demo deck: *"the agent chose parse → redact → score → match"*).
 
-### 1. Backend Setup & Run
+## Run offline (0 Azure keys)
+
 ```bash
-# Clone repository
-git clone https://github.com/Anvi-g/resume_doctor.git
-cd resume_doctor
-
-# Create and activate virtual environment
-python -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install backend dependencies
+python3 -m venv venv && source venv/bin/activate
 pip install -r requirements.txt
-
-# Configure environment variables (optional for offline mock mode)
-cp .env.example .env
-
-# Run FastAPI Gateway server
-uvicorn backend.app.main:app --reload --port 8000
+FORCE_OFFLINE=1 uvicorn src.backend.main:app --reload --port 8000
 ```
-*Backend API Docs will be available at:* `http://localhost:8000/docs`
 
-### 2. Frontend Setup & Run
 ```bash
-# Navigate to frontend directory
-cd frontend
-
-# Install Node dependencies
-npm install
-
-# Start Vite React dev server
-npm run dev
+curl -s -F "file=@tests/sample_resumes/sample_resume_testing.pdf" \
+     -F "job_description=Python Developer with FastAPI, Docker, Azure, Git and PostgreSQL." \
+     http://localhost:8000/api/analyze | python -m json.tool
+curl -s http://localhost:8000/api/agent/trace | python -m json.tool
 ```
-*Frontend UI Dashboard will be available at:* `http://localhost:5173`
 
-### 3. Running Unit Test Suite
+## Enable the live supervisor agent
+
+1. **Provision** an Azure AI Foundry project: sign in at `ai.azure.com`, create a
+   project (hub), and deploy a chat model (e.g. `gpt-4.1-mini`).
+2. Copy `.env.example` → `.env` and set `AZURE_AI_PROJECT_ENDPOINT` (project
+   **Overview → Project endpoint**) and `AZURE_AI_MODEL_DEPLOYMENT_NAME`.
+3. Provide the same-scope keys for the three AI service tools
+   (`AZURE_DOC_INTEL_*`, `AZURE_AI_LANG_*`, `AZURE_OPENAI_*`).
+4. Authenticate with
+   [`DefaultAzureCredential`](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.defaultazurecredential)
+   — `az login` (Azure CLI) works out of the box; set the right subscription/target the project.
+5. Start the server. On the first request the supervisor agent is registered on
+   the platform and drives the tools. Watch the order in `/api/agent/trace`.
+
+## Tests
+
 ```bash
-./venv/bin/pytest
+# hermetic offline suite (no Azure keys required)
+venv/bin/pytest -q
+
+# live integration — only when a real project endpoint is available
+export AZURE_AI_PROJECT_ENDPOINT=https://<your-project>.eastus2.aiservices.azure.com/
+az login
+venv/bin/pytest -q -m slow
 ```
 
----
+51 tests cover the 4 worker tools offline, the agent loop (scripted fake client),
+deterministic assembly, and the FastAPI gateway.
 
-## 🔗 Shared API Endpoints & Pydantic Data Contracts
+## Responsible AI
 
-### 1. `POST /api/analyze` (Master Ingestion Route)
-Accepts a multipart resume file (`PDF` or `DOCX`) and an optional `job_description` string. Executes all 4 AI modules and returns `MasterAnalyzeResponse`:
-
-```json
-{
-  "doc_summary": {
-    "raw_text": "John Doe...",
-    "page_count": 1,
-    "tables": [],
-    "file_type": "pdf"
-  },
-  "pii_summary": {
-    "clean_text": "[NAME]\nSoftware Engineer...",
-    "detected_pii": [{"type": "Person", "text": "John Doe"}],
-    "extracted_skills": ["Python", "FastAPI", "Azure"],
-    "extracted_certifications": ["Azure AI-103"]
-  },
-  "ats_analysis": {
-    "ats_score": 88,
-    "strengths": ["Clear action verbs", "Relevant skill section"],
-    "weaknesses": ["Unquantified metric bullet points"],
-    "star_rewrites": [
-      {
-        "original": "Built REST APIs with Python",
-        "improved_star": "Engineered 12+ RESTful microservices using Python and FastAPI, reducing response latency by 35%.",
-        "impact_metric": "35% latency reduction"
-      }
-    ]
-  },
-  "jd_match": {
-    "match_percentage": 85.0,
-    "matched_skills": ["Python", "FastAPI", "Azure"],
-    "missing_skills": ["Kubernetes"],
-    "recommendations": ["Add evidence of experience with Kubernetes."]
-  }
-}
-```
-
----
-
-## 🛡️ Responsible AI & Privacy Guarantees
-
-For detailed information regarding our data governance, PII masking algorithms, and ethical AI safeguards, see [`docs/responsible_ai.md`](docs/responsible_ai.md).
-
-- **Data Privacy**: No raw user PII is sent to external GenAI endpoints; sensitive entities are masked locally beforehand.
-- **Fairness & Bias**: ATS evaluation focuses exclusively on technical skill overlap, formatting structure, and metric quantification.
+See `docs/responsible_ai.md` for the fairness/transparency notes that ship with
+this lab edition.

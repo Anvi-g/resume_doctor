@@ -1,34 +1,69 @@
-# Security & Secrets
+# ---------- Security & Secrets ----------
 .env
-.env.local
+.env.*
+!.env.example
+*.local
 *.pem
 *.key
+*.p12
+*.pfx
 
-# Python Virtual Environments & Cache
+# ---------- Python Virtual Environments & Cache ----------
+venv/
+.venv/
+env/
+ENV/
 __pycache__/
 *.py[cod]
 *$py.class
-venv/
-.venv/
+*.egg-info/
+.eggs/
+build/
+dist/
+wheels/
+*.whl
 .pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+ipynb_checkpoints/
 
-# IDE & OS Files
-.vscode/
-.idea/
-.DS_Store
+# ---------- Data & Databases (local/generated) ----------
+*.db
+*.sqlite3
+*.log
+*.tmp
 
-# Utility & Local Scripts
-generate_pdf.py
-
-# Node / Frontend Build Outputs
+# ---------- Node / Frontend ----------
 node_modules/
 dist/
-build/
+.vite/
+.vite-cache/
+*.tsbuildinfo
+.eslintcache
 
-# Test & Log outputs
+# ---------- Azure / Agentic runtime artifacts ----------
+.azure/
+.agents/
+.cache/
+*.transport
+*.request
+
+# ---------- IDE & OS Files ----------
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# ---------- Utility & Local Scripts ----------
+generate_pdf.py
+
+# ---------- Test & Log outputs ----------
 *.pdf
 !tests/sample_resumes/*.pdf
-*.log
-.coverage
-htmlcov/
-
+.watchmanconfig

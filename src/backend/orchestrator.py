@@ -100,22 +100,63 @@ class MasterOrchestrator:
         # Step 3 & 4: CONCURRENT EXECUTION (Member 3 & Member 4)
         # Running via asyncio.gather() cuts total latency significantly
         # -------------------------------------------------------------
-        lines = [line.strip(" -*•\t\r") for line in clean_text.split("\n") if line.strip()]
+        lines = [line.strip(" -*•·\t\r") for line in clean_text.split("\n") if line.strip()]
         candidate_bullets: List[str] = []
+
+        skip_keywords = [
+            "resume", "curriculum", "cv", "@", "[email]", "[phone]", "[address]", "[name]", "[ssn]", "[organization]",
+            "[location]", "[pii]", "address", "location", "patiala", "punjab", "india", "bachelor", "master", "phd", "degree",
+            "university", "college", "school", "research interests", "education", "skills", "summary", "contact", "interests",
+            "patents", "publications", "github.com", "linkedin.com", "http", "www", "dob", "gender", "nationality", "languages",
+            "cgpa", "gpa", "b.tech", "m.tech", "b.e.", "m.e.", ":selected:", "hobby", "hobbies", "phone", "email",
+            "coursework", "relevant coursework", "data structures", "operating systems", "computer networks",
+            "distributed systems", "linear algebra", "database management", "technical skills", "certifications", "achievements"
+        ]
+
+        action_starters = [
+            "built", "engineered", "designed", "implemented", "created", "managed", "led", "automated",
+            "optimized", "architected", "integrated", "deployed", "maintained", "analyzed", "reduced",
+            "increased", "spearheaded", "improved", "scaled", "trained", "configured", "customized",
+            "developed", "crafted", "utilized", "achieved", "executed", "collaborated", "formulated",
+            "constructed", "co-inventor", "qualified", "secured", "pioneered", "refactored"
+        ]
+
+        def is_valid_bullet(text: str) -> bool:
+            cleaned = text.strip(" -*•·\t\r")
+            t_lower = cleaned.lower()
+            first_word = t_lower.split()[0] if t_lower.split() else ""
+            
+            # 1. Must start with a recognized action verb or phrase
+            if not any(starter in first_word for starter in action_starters) and not any(t_lower.startswith(starter) for starter in action_starters):
+                return False
+            # 2. Reject if line contains PII tags or square brackets
+            if re.search(r"\[(NAME|EMAIL|PHONE|ADDRESS|SSN|ORGANIZATION|LOCATION|PII)\]", text, re.IGNORECASE):
+                return False
+            if re.search(r"\[[A-Z_]+\]", text):
+                return False
+            # 3. Reject if line contains pipe separator (|) used in skill list headers
+            if "|" in text or ":selected:" in t_lower:
+                return False
+            # 4. Reject if line is too short (< 28 chars) or ends with section colon
+            if len(text) < 28 or text.endswith(":"):
+                return False
+            # 5. Reject if contains any contact/education/coursework skip keywords
+            if any(skip_kw in t_lower for skip_kw in skip_keywords):
+                return False
+            # 6. Reject date-only ranges
+            if re.search(r"^\d{1,2}/\d{4}", text) or re.search(r"^\d{4}\s*-\s*\d{4}", text):
+                return False
+            return True
+
+        # Pick candidate experience bullets starting with action verbs
         for line in lines:
-            line_lower = line.lower()
-            if (
-                len(line) > 20
-                and "@" not in line
-                and not any(header in line_lower for header in ["resume", "curriculum vitae", "contact", "summary", "education", "experience", "skills", "references"])
-                and not re.search(r"\d{5}", line)
-            ):
+            if is_valid_bullet(line):
                 candidate_bullets.append(line)
                 if len(candidate_bullets) >= 5:
                     break
 
-        if not candidate_bullets:
-            candidate_bullets = ["Built and maintained scalable application software."]
+
+
 
         # Define M3 task (ATS Score + STAR Rewrites)
         async def _run_member_3():

@@ -22,8 +22,10 @@ from src.backend.models.schemas import (
 
 # Import Member 3 Azure OpenAI Service
 from src.backend.services.azure_openai import AzureOpenAIService
-# Import Master Orchestrator Pipeline
+# Import Master Orchestrator Pipeline (deterministic fallback for offline grading)
 from src.backend.orchestrator import MasterOrchestrator
+# Import Azure AI Foundry Supervisor Agent (AI-103 Agent Service)
+from src.backend.agents.agent_service import ResumeDoctorAgentService, agent_service as default_agent_service
 
 # Initialize FastAPI Application Gateway instance
 app = FastAPI(
@@ -44,6 +46,7 @@ app.add_middleware(
 # Instantiate singleton service instances
 openai_service = AzureOpenAIService()
 orchestrator = MasterOrchestrator()
+agent_service: ResumeDoctorAgentService = default_agent_service
 
 
 @app.get("/health")
@@ -138,6 +141,7 @@ def root_endpoint():
 @app.get("/api/health", tags=["Monitoring"])
 def api_health_check():
     """Detailed health check validating all 4 AI-103 and data modules."""
+    agent_status = agent_service.status()
     return {
         "status": "Healthy",
         "modules": {
@@ -145,6 +149,12 @@ def api_health_check():
             "m2_ai_language": "Active",
             "m3_openai_ats": "Mock" if openai_service.is_mock_mode else "Live",
             "m4_jd_matcher": "Active (TF-IDF + Cosine Similarity)"
+        },
+        "agentic": {
+            "supervisor_agent": agent_status["agent_name"],
+            "mode": agent_status["mode"],
+            "configured": agent_status["configured"],
+            "model": agent_status["model"],
         }
     }
 
@@ -161,12 +171,11 @@ async def analyze_resume(
 ):
     """
     Master Ingestion Gateway Route (Member 4 Lead):
-    Orchestrates all 4 modules:
-    1. Member 1: Layout & table extraction (Doc Intelligence)
-    2. Member 2: Sensitive entity redaction & NER (Azure AI Language)
-    3. Concurrently via asyncio.gather():
-       - Member 3: ATS Score & STAR bullet rewrite (Azure OpenAI)
-       - Member 4: TF-IDF vectorization & Cosine Similarity match
+    Orchestrates all 4 modules THROUGH the Azure AI Foundry supervisor agent:
+    1. Member 1: Layout & table extraction (Doc Intelligence)      -> agent tool parse_resume
+    2. Member 2: Sensitive entity redaction & NER (Azure AI Lang)  -> agent tool redact_pii
+    3. Member 3: ATS Score & STAR bullet rewrite (Azure OpenAI)    -> agent tool score_ats
+    4. Member 4: TF-IDF vectorization & Cosine Similarity match    -> agent tool match_jd
     """
     filename = resume_file.filename or "resume.pdf"
     file_ext = filename.split(".")[-1].lower() if "." in filename else ""
@@ -184,7 +193,7 @@ async def analyze_resume(
         raise HTTPException(status_code=500, detail=f"Failed to read resume file: {str(e)}")
 
     try:
-        response = await orchestrator.analyze_to_model(
+        response = await agent_service.analyze(
             file_bytes=file_bytes,
             filename=filename,
             job_description=job_description,
@@ -213,6 +222,19 @@ async def direct_match_jd(request: DirectJDMatchRequest):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"JD match computation failed: {str(e)}")
+
+
+@app.get("/api/agent/trace", tags=["Agentic"])
+async def agent_trace():
+    """
+    Returns the last supervisor-agent run: which module tools were called,
+    in which order, and the agent's natural-language summary.
+    """
+    return {
+        "status": agent_service.status(),
+        "last_tool_calls": agent_service.last_run_trace,
+        "last_agent_summary": agent_service.last_agent_summary,
+    }
 
 
 if __name__ == "__main__":
