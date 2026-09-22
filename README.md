@@ -21,26 +21,24 @@ call, in which order, and assembles the final `MasterAnalyzeResponse`.
 Resume bytes live on a per-request `ToolContext` (the agent passes only JSON args,
 so tools receive the filename; offline mock always works with zero Azure keys).
 
+---
+
 ## Demo & Screenshots
 
-### Dashboard Preview
-![Resume Doctor Dashboard](docs/assets/dashboard.png)
+### Dashboard Previews
+![Resume Doctor Dashboard - Ingestion & Settings](docs/assets/1.png)
 
-### Video Demos
+![Resume Doctor Dashboard - Audit & Analysis Results](docs/assets/2.png)
 
-<details>
-<summary>🎥 <b>Watch Resume Audit Demo (Part 1)</b></summary>
+### Live Demo Animations (Sample Resume Audits)
 
-<video src="docs/assets/resume_analysis.mp4" controls width="100%"></video>
+#### Sample Resume Audit 1
+![Resume Analysis Output - Sample Resume 1](docs/assets/resume_analysis.gif)
 
-</details>
+#### Sample Resume Audit 2
+![Resume Analysis Output - Sample Resume 2](docs/assets/resume_analysis2.gif)
 
-<details>
-<summary>🎥 <b>Watch Resume Audit Demo (Part 2)</b></summary>
-
-<video src="docs/assets/resume_analysis2.mp4" controls width="100%"></video>
-
-</details>
+---
 
 ## Repo Layout
 
@@ -49,96 +47,94 @@ so tools receive the filename; offline mock always works with zero Azure keys).
 | `src/backend/agents/function_tools.py` | 4 module tool functions + OpenAI `FunctionTool` definitions + dispatcher |
 | `src/backend/agents/agent_service.py` | Supervisor-agent Responsive loop, 3-mode fallback, trace capture |
 | `src/backend/orchestrator.py` | Deterministic `MasterOrchestrator` — kept as the **offline fallback** |
-| `src/backend/app.py` | FastAPI gateway; `/api/analyze` routes through the agent |
+| `src/backend/main.py` / `app.py` | FastAPI gateway; `/api/analyze` routes through the agent |
 | `frontend/` | React (Vite) + Lucide Icons UI with dynamic backend health status badge |
 | `tests/test_agent.py` | Agent loop harness (scripted, no network) + opt-in LIVE test |
 
-## Modes
+---
 
-| Mode | Indicator | Trigger | What runs |
+## Execution Modes
+
+| Mode | UI Status Indicator | Trigger | What Runs |
 |---|---|---|---|
 | **agent_service** | `AZURE AI FOUNDRY` | `AZURE_AI_PROJECT_ENDPOINT` set, `FORCE_OFFLINE=0` | Foundry agent service + Responses function-tool loop |
-| **responses** (stateless) | `AZURE OPENAI RESPONSES` | agent platform fails at runtime | `get_openai_client()` + tools passed per request |
-| **offline** | `LOCAL WORKSPACE` / `API Connected` | endpoint unset or `FORCE_OFFLINE=1` | `MasterOrchestrator` (deterministic, no Azure needed) |
+| **responses** (stateless) | `AZURE OPENAI RESPONSES` | Agent platform fails at runtime | `get_openai_client()` + tools passed per request |
+| **offline** | `LOCAL WORKSPACE` / `API Connected` | Endpoint unset or `FORCE_OFFLINE=1` | `MasterOrchestrator` (deterministic mock, zero Azure keys needed) |
 
 `GET /api/agent/trace` returns the last run's tool-call order + agent summary
-(useful for the demo deck: *"the agent chose parse → redact → score → match"*).
-
-## Quickstart & Running Locally
-
-### 1. Backend Server (FastAPI)
-
-```bash
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-FORCE_OFFLINE=1 uvicorn src.backend.main:app --reload --port 8000
-```
-
-Verify backend health and offline analysis:
-```bash
-curl -s -F "file=@tests/sample_resumes/sample_resume_testing.pdf" \
-     -F "job_description=Python Developer with FastAPI, Docker, Azure, Git and PostgreSQL." \
-     http://localhost:8000/api/analyze | python -m json.tool
-curl -s http://localhost:8000/api/agent/trace | python -m json.tool
-```
-
-### 2. Frontend Development Server (React + Vite)
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+(useful for demoing: *"the agent chose parse → redact → score → match"*).
 
 ---
 
-## Enable the Live Supervisor Agent
+## Run Instructions
 
-1. **Provision** an Azure AI Foundry project: sign in at `ai.azure.com`, create a
-   project (hub), and deploy a chat model (e.g. `gpt-4.1-mini`).
-2. Copy `.env.example` → `.env` and set `AZURE_AI_PROJECT_ENDPOINT` (project
-   **Overview → Project endpoint**) and `AZURE_AI_MODEL_DEPLOYMENT_NAME`.
-3. Provide the same-scope keys for the three AI service tools
-   (`AZURE_DOC_INTEL_*`, `AZURE_AI_LANG_*`, `AZURE_OPENAI_*`).
-4. Authenticate with
-   [`DefaultAzureCredential`](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.defaultazurecredential)
-   — `az login` (Azure CLI) works out of the box; set the right subscription/target the project.
-5. Start the server. On the first request the supervisor agent is registered on
-   the platform and drives the tools. Watch the order in `/api/agent/trace`.
+### Option A: Local / Offline Mode (0 Azure Credentials Required)
 
----
+Runs using the deterministic mock engine. Ideal for local UI development and testing.
 
-## How to Include Images & Demo Videos in README
-
-To showcase screenshots or screen recordings directly in GitHub:
-
-### Option 1: Commit Assets in Repository (Recommended)
-1. Create an assets directory:
+1. **Start Backend (FastAPI)**:
    ```bash
-   mkdir -p docs/assets
-   ```
-2. Save your screenshots (`dashboard.png`) or recorded video (`demo.mp4` / `demo.gif`) into `docs/assets/`.
-3. Embed in `README.md`:
-
-   **For Images (PNG/JPG/GIF):**
-   ```markdown
-   ![Resume Doctor Dashboard](docs/assets/dashboard.png)
+   python3 -m venv venv && source venv/bin/activate
+   pip install -r requirements.txt
+   FORCE_OFFLINE=1 uvicorn src.backend.main:app --reload --port 8000
    ```
 
-   **For Videos (MP4/WebM):**
-   ```html
-   <video src="docs/assets/demo.mp4" controls width="100%"></video>
+2. **Start Frontend (React + Vite)**:
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
+   Open [http://localhost:5173](http://localhost:5173) in your browser.
+
+3. **Verify via CLI**:
+   ```bash
+   curl -s -F "file=@tests/sample_resumes/sample_resume_testing.pdf" \
+        -F "job_description=Python Developer with FastAPI, Docker, Azure, Git and PostgreSQL." \
+        http://localhost:8000/api/analyze | python -m json.tool
+   curl -s http://localhost:8000/api/agent/trace | python -m json.tool
    ```
 
-### Option 2: GitHub Drag & Drop (Easiest for Videos/GIFs)
-1. Go to any GitHub Issue or Pull Request comment box.
-2. Drag and drop your image or video file (`.mp4`, `.mov`, `.gif`, `.png`).
-3. GitHub automatically uploads the file and generates a markdown/HTML snippet like:
-   ```markdown
-   https://github.com/user-attachments/assets/xxxx-xxxx-xxxx
+---
+
+### Option B: Normal / Live Azure Production Mode (Azure AI Foundry Agent)
+
+Runs the live AI supervisor agent with Azure Document Intelligence, Azure AI Language (PII), and Azure OpenAI.
+
+1. **Provision Azure Services**:
+   - Sign in at [ai.azure.com](https://ai.azure.com) and create an Azure AI Foundry project.
+   - Deploy a chat model (e.g. `gpt-4.1-mini`).
+   - Provision Azure Document Intelligence and Azure AI Language resources.
+
+2. **Configure Environment (`.env`)**:
+   Copy `.env.example` → `.env` and set:
+   ```env
+   AZURE_AI_PROJECT_ENDPOINT=https://<your-project>.eastus2.aiservices.azure.com/
+   AZURE_AI_MODEL_DEPLOYMENT_NAME=gpt-4.1-mini
+   AZURE_DOC_INTEL_ENDPOINT=...
+   AZURE_DOC_INTEL_KEY=...
+   AZURE_AI_LANG_ENDPOINT=...
+   AZURE_AI_LANG_KEY=...
+   AZURE_OPENAI_ENDPOINT=...
+   AZURE_OPENAI_API_KEY=...
+   FORCE_OFFLINE=0
    ```
-4. Copy that snippet and paste it directly into your `README.md`.
+
+3. **Authenticate with Azure CLI**:
+   ```bash
+   az login
+   ```
+
+4. **Launch Backend & Frontend**:
+   ```bash
+   # Terminal 1: Backend
+   source venv/bin/activate
+   uvicorn src.backend.main:app --reload --port 8000
+
+   # Terminal 2: Frontend
+   cd frontend
+   npm run dev
+   ```
 
 ---
 
@@ -148,7 +144,7 @@ To showcase screenshots or screen recordings directly in GitHub:
 # Hermetic offline suite (no Azure keys required)
 venv/bin/pytest -q
 
-# Live integration — only when a real project endpoint is available
+# Live integration test suite (requires active Azure credentials)
 export AZURE_AI_PROJECT_ENDPOINT=https://<your-project>.eastus2.aiservices.azure.com/
 az login
 venv/bin/pytest -q -m slow
@@ -157,7 +153,9 @@ venv/bin/pytest -q -m slow
 51 tests cover the 4 worker tools offline, the agent loop (scripted fake client),
 deterministic assembly, and the FastAPI gateway.
 
+---
+
 ## Responsible AI
 
-See `docs/responsible_ai.md` for the fairness/transparency notes that ship with
+See `docs/responsible_ai.md` for fairness/transparency guidelines that ship with
 this lab edition.
