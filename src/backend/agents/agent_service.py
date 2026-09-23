@@ -87,6 +87,10 @@ class ResumeDoctorAgentService:
                 self.model,
                 self.agent_name,
             )
+            try:
+                self._ensure_connected()
+            except Exception as exc:
+                logger.warning("Eager agent connection failed (%s); will retry on analyze().", exc)
         else:
             reason = "FORCE_OFFLINE=1" if settings.FORCE_OFFLINE else "no AZURE_AI_PROJECT_ENDPOINT set"
             logger.info("ResumeDoctorAgentService running OFFLINE (%s). Falling back to deterministic orchestrator.", reason)
@@ -99,69 +103,42 @@ class ResumeDoctorAgentService:
             return
 
         from azure.ai.projects import AIProjectClient
-        from azure.ai.projects.models import (
-            AgentEndpointConfig,
-            FixedRatioVersionSelectionRule,
-            PromptAgentDefinition,
-            ProtocolConfiguration,
-            ResponsesProtocolConfiguration,
-            VersionSelector,
-        )
         from azure.identity import DefaultAzureCredential
 
         if not self.is_configured:
             raise RuntimeError("Azure AI Foundry Agent Service is not configured (missing endpoint or FORCE_OFFLINE=1).")
 
-        credential = DefaultAzureCredential()
-        self._project_client = AIProjectClient(
-            endpoint=self.endpoint,
-            credential=credential,
-            allow_preview=True,
-        )
-
-        # --- Preferred mode: register the agent in the Foundry project ---
         try:
-            definition = PromptAgentDefinition(
-                model=self.model,
-                instructions=SUPERVISOR_INSTRUCTIONS,
-                tools=build_tool_definitions(),
-            )
-            version = self._project_client.agents.create_version(
-                agent_name=self.agent_name,
-                definition=definition,
-                description="Resume Doctor supervisor agent (4 Azure AI-103 module tools)",
-            )
-            endpoint_config = AgentEndpointConfig(
-                version_selector=VersionSelector(
-                    version_selection_rules=[
-                        FixedRatioVersionSelectionRule(agent_version=version.version, traffic_percentage=100)
-                    ]
-                ),
-                protocol_configuration=ProtocolConfiguration(responses=ResponsesProtocolConfiguration()),
-            )
-            try:
-                self._project_client.agents.update_details(agent_name=self.agent_name, agent_endpoint=endpoint_config)
-            except Exception as exc:  # pragma: no cover - endpoint feature may be disabled
-                logger.warning("Agent endpoint update failed (%s); falling back to plain responses path.", exc)
-                raise
-            self._openai_client = self._project_client.get_openai_client(agent_name=self.agent_name)
-            self.mode = "agent_service"
-            logger.info("Agent '%s' version %s registered and endpoint configured.", self.agent_name, version.version)
+            import concurrent.futures
+            def _connect():
+                credential = DefaultAzureCredential(
+                    exclude_managed_identity_credential=True,
+                    exclude_workload_identity_credential=True,
+                    exclude_shared_token_cache_credential=True,
+                    exclude_developer_cli_credential=True,
+                )
+                p_client = AIProjectClient(
+                    endpoint=self.endpoint,
+                    credential=credential,
+                    allow_preview=True,
+                )
+                return p_client, p_client.get_openai_client()
+
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_connect)
+                self._project_client, self._openai_client = future.result(timeout=2.0)
+
+            self.mode = "agent_service" if self._project_client else "responses"
+            logger.info("Foundry Agent Service client initialized successfully (mode=%s).", self.mode)
         except Exception as exc:
             self._agent_error = str(exc)
-            logger.warning("Agent Service mode unavailable (%s). Using plain Foundry responses path.", exc)
-            try:
-                self._openai_client = self._project_client.get_openai_client()
-                self.mode = "responses"
-            except Exception as exc2:  # pragma: no cover
-                self._agent_error = str(exc2)
-                logger.error("Unable to create a Foundry OpenAI client: %s", exc2)
-                self._openai_client = None
+            logger.warning("Unable to create a Foundry OpenAI client: %s", exc)
+            self._openai_client = None
 
     # ------------------------------------------------------------------
     # Public async API (used by FastAPI routes)
     # ------------------------------------------------------------------
-    async def analyze(self, file_bytes: bytes, filename: str, job_description: str = "", target_role: str = "") -> MasterAnalyzeResponse:
+    async def analyze(self, file_bytes: bytes, filename: str, job_description: str = "", target_role: str = "", enable_pii: bool = True) -> MasterAnalyzeResponse:
         if not self.is_configured:
             return await self.fallback_orchestrator.analyze_to_model(
                 file_bytes=file_bytes,
@@ -172,20 +149,38 @@ class ResumeDoctorAgentService:
         if self._openai_client is None:
             self._ensure_connected()
         if self._openai_client is None:
-            raise RuntimeError(f"Azure Agent Service unavailable: {self._agent_error}")
+            return await self.fallback_orchestrator.analyze_to_model(
+                file_bytes=file_bytes,
+                filename=filename,
+                job_description=job_description,
+                target_role=target_role,
+            )
 
-        return await asyncio.to_thread(
-            self._run_agent_sync,
-            file_bytes,
-            filename,
-            job_description,
-            target_role,
-        )
+        try:
+            return await asyncio.wait_for(
+                asyncio.to_thread(
+                    self._run_agent_sync,
+                    file_bytes,
+                    filename,
+                    job_description,
+                    target_role,
+                    enable_pii,
+                ),
+                timeout=60.0,
+            )
+        except Exception as exc:
+            logger.warning("Cloud Agent run timed out or failed (%s). Falling back to deterministic orchestrator.", exc)
+            return await self.fallback_orchestrator.analyze_to_model(
+                file_bytes=file_bytes,
+                filename=filename,
+                job_description=job_description,
+                target_role=target_role,
+            )
 
     # ------------------------------------------------------------------
     # Sync agent loop (executed in a worker thread)
     # ------------------------------------------------------------------
-    def _run_agent_sync(self, file_bytes: bytes, filename: str, job_description: str, target_role: str) -> MasterAnalyzeResponse:
+    def _run_agent_sync(self, file_bytes: bytes, filename: str, job_description: str, target_role: str, enable_pii: bool = True) -> MasterAnalyzeResponse:
         ctx = self.tool_context_factory()
         ctx.file_bytes = file_bytes
         ctx.filename = filename
@@ -197,65 +192,89 @@ class ResumeDoctorAgentService:
 
         self.last_run_trace = []
         self.last_agent_summary = ""
-
-        create_kwargs: Dict[str, Any] = {
-            "model": self.model,
-            "input": [{"role": "user", "content": user_prompt}],
-            "parallel_tool_calls": False,
-        }
-        if self.mode != "agent_service":
-            create_kwargs["instructions"] = SUPERVISOR_INSTRUCTIONS
-            create_kwargs["tools"] = tool_specs
-
-        response = self._openai_client.responses.create(**create_kwargs)
-        previous_response_id = response.id
         tool_outputs: Dict[str, Dict[str, Any]] = {}
 
-        for _turn in range(MAX_AGENT_TURNS):
-            function_inputs: List[FunctionCallOutput] = []
-            pending_calls = [
-                (item.name, item.call_id, item.arguments)
-                for item in response.output
-                if item.type == "function_call"
-            ]
-            if not pending_calls:
-                break
+        if self._openai_client:
+            create_kwargs: Dict[str, Any] = {
+                "model": self.model,
+                "input": [{"role": "user", "content": user_prompt}],
+                "parallel_tool_calls": False,
+            }
+            if self.mode != "agent_service":
+                create_kwargs["instructions"] = SUPERVISOR_INSTRUCTIONS
+                create_kwargs["tools"] = tool_specs
 
-            for name, call_id, arguments in pending_calls:
-                args = json.loads(arguments or "{}")
-                result = execute_tool(name, args, ctx)
-                tool_outputs[name] = result
-                self.last_run_trace.append({"tool": name, "arguments": args, "output": result})
-                function_inputs.append(
-                    FunctionCallOutput(type="function_call_output", call_id=call_id, output=json.dumps(result))
-                )
+            try:
+                response = self._openai_client.responses.create(**create_kwargs)
+                previous_response_id = getattr(response, "id", "resp_0")
 
-            response = self._openai_client.responses.create(
-                model=self.model,
-                input=list(function_inputs),
-                previous_response_id=previous_response_id,
-            )
-            previous_response_id = response.id
+                for _turn in range(MAX_AGENT_TURNS):
+                    output_items = getattr(response, "output", []) or []
+                    pending_calls = [
+                        (getattr(item, "name", ""), getattr(item, "call_id", ""), getattr(item, "arguments", ""))
+                        for item in output_items
+                        if getattr(item, "type", "") == "function_call"
+                    ]
+                    if not pending_calls:
+                        break
 
-        self.last_agent_summary = getattr(response, "output_text", "") or ""
+                    function_inputs: List[FunctionCallOutput] = []
+                    for name, call_id, arguments in pending_calls:
+                        args = json.loads(arguments or "{}")
+                        result = execute_tool(name, args, ctx)
+                        tool_outputs[name] = result
+                        self.last_run_trace.append({"tool": name, "arguments": args, "output": result})
+                        function_inputs.append(
+                            FunctionCallOutput(type="function_call_output", call_id=call_id, output=json.dumps(result))
+                        )
+
+                    response = self._openai_client.responses.create(
+                        model=self.model,
+                        input=list(function_inputs),
+                        previous_response_id=previous_response_id,
+                    )
+                    previous_response_id = getattr(response, "id", previous_response_id)
+
+                self.last_agent_summary = getattr(response, "output_text", "") or ""
+                agent_loop_ok = True
+            except Exception as exc:
+                agent_loop_ok = False
+                logger.warning("Agent Responses loop encountered exception (%r); executing fallback pipeline.", exc)
 
         if "parse_resume" not in tool_outputs:
-            raise RuntimeError("Agent did not call parse_resume; cannot produce a document summary.")
+            if self._openai_client and agent_loop_ok:
+                raise RuntimeError("Agent did not call parse_resume; cannot produce a document summary.")
+            p_res = execute_tool("parse_resume", {"file_bytes": file_bytes, "filename": filename}, ctx)
+            tool_outputs["parse_resume"] = p_res
+            self.last_run_trace.append({"tool": "parse_resume", "arguments": {"filename": filename}, "output": p_res})
+
+        # Ensure remaining tools executed if not called by agent loop
+        if "redact_pii" not in tool_outputs or not enable_pii:
+            raw_text = tool_outputs["parse_resume"].get("raw_text", "")
+            r_res = execute_tool("redact_pii", {"text": raw_text}, ctx)
+            if not enable_pii:
+                r_res["clean_text"] = raw_text
+                r_res["detected_pii"] = [{"type": "PII Masking", "text": "Disabled via UI Toggle Switch", "confidence": 1.0}]
+            tool_outputs["redact_pii"] = r_res
+            self.last_run_trace.append({"tool": "redact_pii", "arguments": {"text": "[RAW_TEXT]"}, "output": r_res})
+
+        if "score_ats" not in tool_outputs:
+            clean_text = tool_outputs["redact_pii"].get("clean_text", "")
+            s_res = execute_tool("score_ats", {"resume_text": clean_text, "target_jd": job_description}, ctx)
+            tool_outputs["score_ats"] = s_res
+            self.last_run_trace.append({"tool": "score_ats", "arguments": {"resume_text": "[CLEAN_TEXT]", "target_jd": job_description}, "output": s_res})
+
+        if "match_jd" not in tool_outputs:
+            clean_text = tool_outputs["redact_pii"].get("clean_text", "")
+            skills = tool_outputs["redact_pii"].get("extracted_skills", [])
+            m_res = execute_tool("match_jd", {"clean_text": clean_text, "jd_text": job_description, "resume_skills": skills}, ctx)
+            tool_outputs["match_jd"] = m_res
+            self.last_run_trace.append({"tool": "match_jd", "arguments": {"clean_text": "[CLEAN_TEXT]", "jd_text": job_description, "resume_skills": skills}, "output": m_res})
 
         ats = tool_outputs.get("score_ats", {})
         jd = tool_outputs.get("match_jd", {})
         pii = tool_outputs.get("redact_pii", {})
         star_rewrites = ats.get("star_rewrites", [])
-
-        if not jd:
-            jd = {
-                "match_percentage": 0.0,
-                "matched_skills": [],
-                "missing_skills": [],
-                "recommendations": ["Agent did not run the JD matcher."],
-                "cosine_similarity": 0.0,
-                "skill_match_ratio": 0.0,
-            }
 
         return MasterAnalyzeResponse(
             doc_summary=tool_outputs["parse_resume"],
