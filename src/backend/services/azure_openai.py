@@ -38,6 +38,7 @@ from src.backend.models.schemas import (
 from src.backend.prompts.ats_prompts import (
     ATS_SCORING_PROMPT_TEMPLATE,   # Prompt template for ATS scoring
     STAR_REWRITE_PROMPT_TEMPLATE,  # Prompt template for STAR bullet rewrites
+    STAR_REWRITE_SYSTEM_PROMPT,    # System prompt for STAR bullet rewrites with integrity rules
 )
 
 # Load environment variables from local .env file
@@ -191,22 +192,68 @@ class AzureOpenAIService:
         if not isinstance(raw_rewrites, list):
             raw_rewrites = []
 
+        metric_pattern = re.compile(
+            r"(\d+(?:\.\d+)?\s*%|Rs\.?\s?[\d,]+(?:,\d{3})*|\$\s?[\d,]+(?:,\d{3})*|"
+            r"[\d,]+(?:,\d{3})*\s+(?:users|requests|tickets|hours|days|bottlenecks|queries|APIs))",
+            re.IGNORECASE
+        )
+
         clean_rewrites = []
         for item in raw_rewrites:
             if isinstance(item, dict):
                 orig = str(item.get("original_bullet") or item.get("original") or item.get("original_text") or "Original experience bullet")
                 rewritten = str(item.get("rewritten_bullet") or item.get("improved_star") or item.get("rewritten") or orig)
-                metrics = item.get("metrics_added") or []
-                if not isinstance(metrics, list):
-                    metrics = [str(metrics)]
+
+                # Extract metrics present in original bullet
+                orig_metrics = set(m.group(0).strip().lower() for m in metric_pattern.finditer(orig))
+                orig_has_pct = bool(re.search(r"\d+(?:\.\d+)?\s*%", orig))
+
+                # Guardrail: strip hallucinated percentage clauses if original bullet contains no percentages
+                if not orig_has_pct:
+                    # Match clauses like ", resulting in a 40% improvement in..." or "yielding a 25% increase..."
+                    pct_clauses = re.finditer(
+                        r",?\s*(?:resulting in|achieving|yielding|with|improving by)?\s*a?\s*\d+(?:\.\d+)?\s*%\s*(?:improvement|increase|reduction|boost|growth)?\s*(?:in\s+[^.,;\n]+)?",
+                        rewritten,
+                        re.IGNORECASE
+                    )
+                    for match in pct_clauses:
+                        clause = match.group(0)
+                        if any(p.group(0).lower() not in orig_metrics for p in re.finditer(r"\d+(?:\.\d+)?\s*%", clause)):
+                            rewritten = rewritten.replace(clause, "")
+
+                    # Remove any remaining standalone percentages not in original
+                    for match in list(re.finditer(r"\d+(?:\.\d+)?\s*%", rewritten)):
+                        pct_str = match.group(0)
+                        if pct_str.lower() not in orig_metrics:
+                            rewritten = re.sub(rf"\b{re.escape(pct_str)}\b", "", rewritten)
+
+                    rewritten = re.sub(r"\s+", " ", rewritten).strip()
+                    if rewritten and not rewritten.endswith((".", "!", "?")):
+                        rewritten += "."
+
+                raw_metrics = item.get("metrics_added") or []
+                if not isinstance(raw_metrics, list):
+                    raw_metrics = [str(raw_metrics)]
+                
+                # Only keep metrics in metrics_added that actually exist in original bullet
+                clean_metrics = [
+                    str(m) for m in raw_metrics 
+                    if str(m).strip() and (not orig_metrics or any(om in str(m).lower() for om in orig_metrics))
+                ]
+                if not orig_metrics:
+                    clean_metrics = []
+
                 notes = item.get("improvement_notes") or item.get("notes") or ""
+                if not orig_metrics and not notes:
+                    notes = "Reframed into STAR formula. Only metrics present in original bullet are preserved."
+
                 clean_rewrites.append({
                     "original_bullet": orig,
                     "rewritten_bullet": rewritten,
                     "situation_task": str(item.get("situation_task")) if item.get("situation_task") else None,
                     "action": str(item.get("action")) if item.get("action") else None,
                     "result": str(item.get("result")) if item.get("result") else None,
-                    "metrics_added": [str(m) for m in metrics if m],
+                    "metrics_added": clean_metrics,
                     "improvement_notes": str(notes) if notes else None,
                 })
         
@@ -248,15 +295,14 @@ class AzureOpenAIService:
 
     def _call_foundry_star(self, bullet_points: List[str], target_jd: str = "") -> STARRewriteBatchOutput:
         sys_prompt = (
-            "You are an expert ATS recruiter. Convert generic bullet points into STAR-formatted (Situation, Task, Action, Result) "
-            "bullet points with quantified impact metrics.\n"
-            "Return a JSON object matching this schema:\n"
+            f"{STAR_REWRITE_SYSTEM_PROMPT}\n\n"
+            "Return a valid JSON object matching this schema:\n"
             "{\n"
             '  "rewrites": [\n'
             "    {\n"
             '      "original_bullet": string,\n'
             '      "rewritten_bullet": string,\n'
-            '      "metrics_added": list of strings,\n'
+            '      "metrics_added": list of strings (ONLY include metrics found verbatim in the original bullet, empty list if none),\n'
             '      "improvement_notes": string\n'
             "    }\n"
             "  ],\n"

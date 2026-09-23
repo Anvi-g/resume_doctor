@@ -549,7 +549,7 @@ export default function App() {
                 <Sparkles className="text-amber" size={22} />
                 <div>
                   <h3>STAR Bullet Transformation Engine</h3>
-                  <p className="subtext">Converts weak resume bullets into quantifiable STAR format</p>
+                  <p className="subtext">Converts weak resume bullets into STAR format without metric fabrication</p>
                 </div>
               </div>
 
@@ -582,7 +582,7 @@ export default function App() {
                         </div>
                         <p className="improved-text">{rewrite.improved_star}</p>
                         {rewrite.impact_metric && (
-                          <span className="impact-badge">Metric Added: {rewrite.impact_metric}</span>
+                          <span className="impact-badge">Metric Preserved: {rewrite.impact_metric}</span>
                         )}
                       </div>
                     </div>

@@ -163,6 +163,31 @@ def test_star_rewrite_is_real_rewrite_without_editorial_talk(mock_service):
     assert item.metrics_added == []
 
 
+def test_sanitize_star_data_strips_hallucinated_percentage():
+    """
+    Test 4d: Verify that _sanitize_star_data strips fabricated percentage clauses
+    if the original bullet contained no percentages.
+    """
+    raw_llm_output = {
+        "rewrites": [
+            {
+                "original_bullet": "Engineered an offline inference pipeline (face embeddings, MFCC voiceprints) and a TOFU protocol with Wi-Fi geo-fencing for physical security actuation.",
+                "rewritten_bullet": "Led the development of an offline inference pipeline processing face embeddings and MFCC voiceprints combined with a TOFU protocol and Wi-Fi geo-fencing to enhance physical security responses, resulting in a 40% improvement in unauthorized access detection accuracy.",
+                "metrics_added": ["40%"],
+                "improvement_notes": "Added metric."
+            }
+        ],
+        "overall_summary": "Rewritten bullets."
+    }
+
+    sanitized = AzureOpenAIService._sanitize_star_data(raw_llm_output)
+    item = sanitized["rewrites"][0]
+
+    # The 40% percentage was hallucinated and must be stripped from rewritten_bullet and metrics_added
+    assert "40%" not in item["rewritten_bullet"]
+    assert item["metrics_added"] == []
+
+
 @pytest.mark.asyncio
 async def test_star_bullet_rewrite_async(mock_service):
     """
