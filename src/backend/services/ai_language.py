@@ -9,6 +9,7 @@ Responsible for:
 import os
 import re
 import logging
+import asyncio
 from typing import List, Dict, Any, Optional
 from pydantic import BaseModel, Field
 from azure.core.credentials import AzureKeyCredential
@@ -91,9 +92,11 @@ class AILanguageService:
         self.client: Optional[TextAnalyticsClient] = None
         self.is_configured: bool = False
 
+        force_offline = os.getenv("FORCE_OFFLINE", "0").lower() in ("true", "1")
         # Validate credentials (reject placeholder values from .env.example)
         if (
-            self.endpoint 
+            not force_offline
+            and self.endpoint 
             and self.key 
             and "your-language-resource" not in self.endpoint 
             and "your_language_key_here" not in self.key
@@ -101,7 +104,10 @@ class AILanguageService:
             try:
                 self.client = TextAnalyticsClient(
                     endpoint=self.endpoint, 
-                    credential=AzureKeyCredential(self.key)
+                    credential=AzureKeyCredential(self.key),
+                    connection_timeout=10,
+                    read_timeout=15,
+                    retry_total=2,
                 )
                 self.is_configured = True
                 logger.info("Azure AI Language TextAnalyticsClient initialized successfully.")
@@ -109,8 +115,50 @@ class AILanguageService:
                 logger.warning(f"Failed to initialize Azure AI Language client: {e}. Falling back to offline mode.")
                 self.is_configured = False
         else:
-            logger.info("No Azure AI Language credentials configured. Running in offline/mock mode.")
+            logger.info("No Azure AI Language credentials configured or FORCE_OFFLINE=1. Running in offline/mock mode.")
             self.is_configured = False
+
+    def _sync_redact_and_extract(self, raw_text: str) -> RedactPIIResponse:
+        pii_docs = self.client.recognize_pii_entities([raw_text])
+        detected_pii: List[Dict[str, Any]] = []
+        clean_text = raw_text
+
+        if pii_docs and not pii_docs[0].is_error:
+            doc = pii_docs[0]
+            sorted_entities = sorted(doc.entities, key=lambda e: e.offset, reverse=True)
+
+            for ent in sorted_entities:
+                detected_pii.append({
+                    "type": ent.category,
+                    "text": ent.text,
+                    "confidence": round(ent.confidence_score, 2)
+                })
+                tag = PII_TAG_MAP.get(ent.category, f"[{ent.category.upper()}]")
+                clean_text = clean_text[:ent.offset] + tag + clean_text[ent.offset + ent.length:]
+
+        ner_docs = self.client.recognize_entities([raw_text])
+        skills: List[str] = []
+        certifications: List[str] = []
+
+        if ner_docs and not ner_docs[0].is_error:
+            doc = ner_docs[0]
+            for ent in doc.entities:
+                if ent.category in ("Skill", "Product"):
+                    skills.append(ent.text)
+                elif ent.category == "Certification":
+                    certifications.append(ent.text)
+                elif any(cert_kw in ent.text.lower() for cert_kw in ["certified", "associate", "professional", "pmp", "master"]):
+                    certifications.append(ent.text)
+
+        unique_skills = sorted(list({s.strip() for s in skills if s.strip()}))
+        unique_certs = sorted(list({c.strip() for c in certifications if c.strip()}))
+
+        return RedactPIIResponse(
+            clean_text=clean_text,
+            detected_pii=detected_pii,
+            extracted_skills=unique_skills,
+            extracted_certifications=unique_certs
+        )
 
     async def redact_pii_and_extract_entities(self, raw_text: str) -> RedactPIIResponse:
         """
@@ -119,68 +167,14 @@ class AILanguageService:
         2. Extracts skills and certifications using NER.
         3. Returns structured RedactPIIResponse.
         """
-        # Guard clause for empty/whitespace input
         if not raw_text or not raw_text.strip():
             return RedactPIIResponse()
 
-        # Offline fallback if Azure is not configured
         if not self.is_configured or not self.client:
             return self._offline_fallback(raw_text)
 
         try:
-            # -------------------------------------------------------------
-            # Step A: Azure PII Recognition & Reverse-Offset Masking
-            # -------------------------------------------------------------
-            pii_docs = self.client.recognize_pii_entities([raw_text])
-            detected_pii: List[Dict[str, Any]] = []
-            clean_text = raw_text
-
-            if pii_docs and not pii_docs[0].is_error:
-                doc = pii_docs[0]
-                # CRITICAL: Sort in reverse order of character offset
-                # Replacing from end-to-beginning guarantees earlier offsets do not shift
-                sorted_entities = sorted(doc.entities, key=lambda e: e.offset, reverse=True)
-
-                for ent in sorted_entities:
-                    detected_pii.append({
-                        "type": ent.category,
-                        "text": ent.text,
-                        "confidence": round(ent.confidence_score, 2)
-                    })
-                    tag = PII_TAG_MAP.get(ent.category, f"[{ent.category.upper()}]")
-                    clean_text = clean_text[:ent.offset] + tag + clean_text[ent.offset + ent.length:]
-
-            # -------------------------------------------------------------
-            # Step B: Azure NER Entity Extraction (Skills & Certifications)
-            # -------------------------------------------------------------
-            ner_docs = self.client.recognize_entities([raw_text])
-            skills: List[str] = []
-            certifications: List[str] = []
-
-            if ner_docs and not ner_docs[0].is_error:
-                doc = ner_docs[0]
-                for ent in doc.entities:
-                    # Capture Skills and Product technologies
-                    if ent.category in ("Skill", "Product"):
-                        skills.append(ent.text)
-                    
-                    # Capture Certifications
-                    elif ent.category == "Certification":
-                        certifications.append(ent.text)
-                    elif any(cert_kw in ent.text.lower() for cert_kw in ["certified", "associate", "professional", "pmp", "master"]):
-                        certifications.append(ent.text)
-
-            # Deduplicate and sort
-            unique_skills = sorted(list({s.strip() for s in skills if s.strip()}))
-            unique_certs = sorted(list({c.strip() for c in certifications if c.strip()}))
-
-            return RedactPIIResponse(
-                clean_text=clean_text,
-                detected_pii=detected_pii,
-                extracted_skills=unique_skills,
-                extracted_certifications=unique_certs
-            )
-
+            return await asyncio.to_thread(self._sync_redact_and_extract, raw_text)
         except Exception as e:
             logger.error(f"Error during Azure AI Language execution: {e}. Falling back to offline parser.")
             return self._offline_fallback(raw_text)

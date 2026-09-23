@@ -460,7 +460,77 @@
   color: var(--text-secondary);
 }
 
-/* PII Card */
+/* PII Card & Toggle Switch */
+.pii-toggle-bar {
+  padding: 16px 20px;
+  background: var(--card-bg);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-md);
+}
+
+.pii-toggle-title {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--text-main);
+  display: block;
+}
+
+.pii-toggle-sub {
+  font-size: 0.78rem;
+  color: var(--text-muted);
+  margin-top: 2px;
+}
+
+/* Modern Toggle Switch */
+.toggle-switch {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 26px;
+  flex-shrink: 0;
+}
+
+.toggle-switch input {
+  opacity: 0;
+  width: 0;
+  height: 0;
+}
+
+.toggle-slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background-color: var(--bg-input);
+  border: 1px solid var(--border-color);
+  transition: .3s ease;
+  border-radius: 34px;
+}
+
+.toggle-slider:before {
+  position: absolute;
+  content: "";
+  height: 18px;
+  width: 18px;
+  left: 3px;
+  bottom: 3px;
+  background-color: var(--text-muted);
+  transition: .3s ease;
+  border-radius: 50%;
+}
+
+input:checked + .toggle-slider {
+  background-color: rgba(16, 185, 129, 0.15);
+  border-color: #10b981;
+}
+
+input:checked + .toggle-slider:before {
+  transform: translateX(22px);
+  background-color: #10b981;
+}
+
 .pii-card {
   padding: 24px;
   margin-bottom: 24px;

@@ -70,7 +70,10 @@ _ACTION_STARTERS = [
     "built", "engineered", "designed", "implemented", "created", "managed", "led", "automated",
     "optimized", "architected", "integrated", "deployed", "maintained", "analyzed", "reduced",
     "increased", "spearheaded", "improved", "scaled", "trained", "configured", "utilized",
-    "developed", "crafted", "achieved", "executed", "pioneered", "refactored",
+    "developed", "crafted", "achieved", "executed", "pioneered", "refactored", "launched",
+    "formulated", "constructed", "co-invented", "secured", "shuttered", "authored", "driven",
+    "accelerated", "cut", "boosted", "slashed", "drove", "produced", "established", "streamlined",
+    "supervised", "directed", "evaluated", "generated",
 ]
 
 _SKIP_KEYWORDS = [
@@ -84,23 +87,37 @@ _SKIP_KEYWORDS = [
 def _extract_candidate_bullets(clean_text: str, limit: int = 5) -> List[str]:
     """Extract up to ``limit`` action-verb starter senior-experience bullet lines."""
     candidates: List[str] = []
-    for raw_line in clean_text.splitlines():
-        line = raw_line.strip(" -*•·\t\r")
-        if not line:
-            continue
+    lines = [raw.strip(" -*•·\t\r") for raw in clean_text.splitlines() if raw.strip()]
+
+    def is_valid_candidate(line: str) -> bool:
+        lower = line.lower()
+        if re.search(r"\[[A-Z_]+\]", line):
+            return False
+        if "|" in line or len(line) < 25 or line.endswith(":"):
+            return False
+        if any(kw in lower for kw in _SKIP_KEYWORDS):
+            return False
+        return True
+
+    for line in lines:
         lower = line.lower()
         first_word = lower.split()[0] if lower.split() else ""
-        if not any(line.lower().startswith(st) or first_word == st for st in _ACTION_STARTERS):
-            continue
-        if re.search(r"\[[A-Z_]+\]", line):
-            continue
-        if "|" in line or len(line) < 28 or line.endswith(":"):
-            continue
-        if any(kw in lower for kw in _SKIP_KEYWORDS):
-            continue
-        candidates.append(line)
-        if len(candidates) >= limit:
-            break
+        if any(lower.startswith(st) or first_word == st for st in _ACTION_STARTERS):
+            if is_valid_candidate(line):
+                candidates.append(line)
+                if len(candidates) >= limit:
+                    return candidates
+
+    # Fallback pass if fewer than 2 bullets matched strict starters
+    if len(candidates) < 2:
+        for line in lines:
+            if line not in candidates and is_valid_candidate(line):
+                # Ensure line starts with a capital letter (typical experience sentence)
+                if line[0].isupper():
+                    candidates.append(line)
+                    if len(candidates) >= limit:
+                        break
+
     return candidates
 
 

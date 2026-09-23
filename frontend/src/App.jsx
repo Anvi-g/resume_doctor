@@ -49,6 +49,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [results, setResults] = useState(null);
   
+  const [enablePiiRedaction, setEnablePiiRedaction] = useState(true);
   const [showRedacted, setShowRedacted] = useState(true);
   const [copiedIndex, setCopiedIndex] = useState(null);
   const [healthStatus, setHealthStatus] = useState(null);
@@ -97,6 +98,7 @@ export default function App() {
     const formData = new FormData();
     formData.append('resume_file', file);
     formData.append('job_description', jdText);
+    formData.append('enable_pii', enablePiiRedaction);
 
     try {
       const response = await fetch(`${API_BASE}/api/analyze`, {
@@ -177,14 +179,14 @@ export default function App() {
 
         <div className="nav-status">
           {healthStatus && (
-            <div className="health-badge">
-              <span className="status-dot"></span>
+            <div className={`health-badge ${healthStatus.agentic?.mode === 'offline' ? 'offline' : ''}`}>
+              <span className={`status-dot ${healthStatus.agentic?.mode === 'agent_service' || healthStatus.agentic?.mode === 'responses' ? 'live' : 'offline'}`}></span>
               <span className="status-text">
-                {healthStatus.agentic?.mode === 'agent_service'
+                {healthStatus.agentic?.mode === 'agent_service' || healthStatus.agentic?.mode === 'responses'
+                  ? 'AZURE AI FOUNDRY (AGENT SERVICE)'
+                  : healthStatus.agentic?.configured
                   ? 'AZURE AI FOUNDRY'
-                  : healthStatus.agentic?.mode === 'responses'
-                  ? 'AZURE OPENAI RESPONSES'  
-                  : healthStatus.status || 'API Connected'}
+                  : 'OFFLINE FALLBACK MODE'}
               </span>
             </div>
           )}
@@ -269,20 +271,39 @@ export default function App() {
             </div>
           </div>
 
-          {/* Action Button & Error Messages */}
-          <div className="action-bar">
-            {error && (
-              <div className="error-banner">
-                <AlertTriangle size={18} />
-                <span>{error}</span>
+          {/* Action Button & Settings */}
+          <div className="action-bar-container grid-2col gap-4 margin-top-4">
+            <div className="pii-toggle-bar glass-card flex-center space-between">
+              <div className="flex-center gap-3">
+                <Lock size={20} className={enablePiiRedaction ? "text-emerald" : "text-muted"} />
+                <div>
+                  <span className="pii-toggle-title">PII Redaction & Entity Masking</span>
+                  <p className="pii-toggle-sub">Azure AI Language (Member 2) masks sensitive contact information</p>
+                </div>
               </div>
-            )}
+              <label className="toggle-switch">
+                <input 
+                  type="checkbox" 
+                  checked={enablePiiRedaction} 
+                  onChange={(e) => setEnablePiiRedaction(e.target.checked)} 
+                />
+                <span className="toggle-slider"></span>
+              </label>
+            </div>
 
-            <button
-              onClick={runAnalysis}
-              disabled={loading}
-              className={`btn-analyze ${loading ? 'loading' : ''}`}
-            >
+            <div className="action-bar flex-center">
+              {error && (
+                <div className="error-banner">
+                  <AlertTriangle size={18} />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <button
+                onClick={runAnalysis}
+                disabled={loading}
+                className={`btn-analyze ${loading ? 'loading' : ''}`}
+              >
               {loading ? (
                 <>
                   <RefreshCw size={20} className="spin-icon" />

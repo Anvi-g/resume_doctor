@@ -12,7 +12,7 @@
 <body>
   <header class="topbar">
     <a class="brand" href="/">RESUME <span>DOCTOR</span></a>
-    <div id="status-badge" class="status"><span class="status-dot"></span> LOCAL WORKSPACE</div>
+    <div id="status-badge" class="status"><span class="status-dot"></span> AZURE AI FOUNDRY</div>
   </header>
 
   <main class="shell">
@@ -26,7 +26,7 @@
       <section class="panel intake-panel">
         <div class="panel-heading">
           <div><span class="step">01</span><h2>Drop your resume</h2></div>
-          <span class="file-types">PDF / DOCX / TXT</span>
+          <span class="file-types">PDF / DOCX</span>
         </div>
         <label id="drop-zone" class="drop-zone" for="resume-file">
           <input id="resume-file" name="resume_file" type="file" accept=".pdf,.docx,.txt" required>
@@ -36,7 +36,14 @@
         </label>
         <div class="fields">
           <label>Target role <span>(optional)</span><input id="target-role" name="target_role" type="text" placeholder="e.g. Senior Python Engineer"></label>
-          <label>Job description <span>(optional)</span><textarea id="job-description" name="job_description" rows="5" placeholder="Paste the job description to get a tailored match analysis..."></textarea></label>
+          <div class="jd-header">
+            <label>Job description <span>(optional)</span></label>
+            <div class="preset-buttons">
+              <button type="button" class="preset-btn" id="btn-cloud-jd">Sample Cloud JD</button>
+              <button type="button" class="preset-btn" id="btn-aiml-jd">Sample AI/ML JD</button>
+            </div>
+          </div>
+          <textarea id="job-description" name="job_description" rows="5" placeholder="Paste the job description to get a tailored match analysis..."></textarea>
         </div>
         <button id="analyze-button" class="primary-button" type="submit"><span>Analyze resume</span><span class="button-arrow">↗</span></button>
         <p id="form-error" class="form-error" role="alert"></p>

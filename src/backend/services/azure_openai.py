@@ -58,8 +58,8 @@ class AzureOpenAIService:
         deployment_name: Optional[str] = None,  # Deployment name (e.g., gpt-4o)
         api_version: Optional[str] = None,      # Azure API version string
         temperature: float = 0.2,               # LLM sampling temperature (0.2 for deterministic output)
-        request_timeout: int = 30,              # API HTTP request timeout in seconds
-        max_retries: int = 2,                   # Number of automated retry attempts on failure
+        request_timeout: int = 10,              # API HTTP request timeout in seconds (fail fast)
+        max_retries: int = 1,                   # Number of automated retry attempts on failure
     ):
         self.endpoint = endpoint if endpoint is not None else os.getenv("AZURE_OPENAI_ENDPOINT", "").strip()
         self.api_key = api_key if api_key is not None else os.getenv("AZURE_OPENAI_KEY", "").strip()
@@ -94,9 +94,15 @@ class AzureOpenAIService:
             # 1. Try Azure AI Foundry Project Client
             if self.project_endpoint:
                 try:
+                    cred = DefaultAzureCredential(
+                        exclude_managed_identity_credential=True,
+                        exclude_workload_identity_credential=True,
+                        exclude_shared_token_cache_credential=True,
+                        exclude_developer_cli_credential=True,
+                    )
                     p_client = AIProjectClient(
                         endpoint=self.project_endpoint,
-                        credential=DefaultAzureCredential(),
+                        credential=cred,
                         allow_preview=True
                     )
                     self.foundry_client = p_client.get_openai_client()
@@ -278,7 +284,7 @@ class AzureOpenAIService:
             try:
                 return self._call_foundry_ats(resume_text, target_jd)
             except Exception as e:
-                logger.error(f"Foundry ATS scoring invocation failed ({e}). Trying fallback LLM...")
+                logger.error(f"Foundry ATS scoring invocation failed: {e}. Trying fallback LLM...")
 
         if self.llm:
             try:
@@ -298,7 +304,7 @@ class AzureOpenAIService:
             try:
                 return await asyncio.to_thread(self._call_foundry_ats, resume_text, target_jd)
             except Exception as e:
-                logger.error(f"Foundry async ATS scoring invocation failed ({e}). Trying fallback LLM...")
+                logger.error(f"Foundry async ATS scoring invocation failed: {e}. Trying fallback LLM...")
 
         if self.llm:
             try:
@@ -323,7 +329,7 @@ class AzureOpenAIService:
             try:
                 return self._call_foundry_star(bullet_points, target_jd)
             except Exception as e:
-                logger.error(f"Foundry STAR rewrite invocation failed ({e}). Trying fallback LLM...")
+                logger.error(f"Foundry STAR rewrite invocation failed: {e}. Trying fallback LLM...")
 
         if self.llm:
             try:
@@ -349,7 +355,7 @@ class AzureOpenAIService:
             try:
                 return await asyncio.to_thread(self._call_foundry_star, bullet_points, target_jd)
             except Exception as e:
-                logger.error(f"Foundry async STAR rewrite invocation failed ({e}). Trying fallback LLM...")
+                logger.error(f"Foundry async STAR rewrite invocation failed: {e}. Trying fallback LLM...")
 
         if self.llm:
             try:
@@ -373,17 +379,57 @@ class AzureOpenAIService:
         text_lower = resume_text.lower()
         word_count = len(resume_text.split())
 
-        # Heuristic scoring based on resume text properties
         formatting_score = 16 if word_count > 50 else 10
         keywords_score = 20 if any(kw in text_lower for kw in ["python", "azure", "api", "fastapi", "react", "sql", "aws", "docker"]) else 12
         sections_score = 14 if any(sec in text_lower for sec in ["experience", "education", "skills", "projects"]) else 8
         action_verbs_score = 17 if any(v in text_lower for v in ["developed", "built", "implemented", "managed", "designed", "created", "led", "automated"]) else 11
         impact_score = 16 if any(char in text_lower for char in ["%", "$", "reduced", "increased", "supported", "improved", "users"]) else 9
-
-        # Calculate exact total overall score out of 100
         overall_score = min(100, max(0, formatting_score + keywords_score + sections_score + action_verbs_score + impact_score))
 
-        # Return validated ATSScoreOutput Pydantic object
+        # Dynamic strengths and improvements extraction
+        tech_keywords = ["Python", "FastAPI", "Docker", "SQL", "Azure", "Git", "React", "JavaScript", "TypeScript", "Machine Learning", "PyTorch", "PostgreSQL", "C++", "Java", "REST APIs"]
+        found_skills = [kw for kw in tech_keywords if re.search(rf"\b{re.escape(kw)}\b", resume_text, re.IGNORECASE)]
+        verbs_found = [v.capitalize() for v in ["developed", "built", "engineered", "implemented", "designed", "created", "automated", "spearheaded", "architected"] if v in text_lower]
+
+        strengths = []
+        if found_skills:
+            skills_str = ", ".join(found_skills[:4])
+            strengths.append(f"Strong technical alignment with hands-on proficiency in {skills_str}.")
+        else:
+            strengths.append("Clear layout structure with identifiable technical experience sections.")
+
+        if verbs_found:
+            verbs_str = ", ".join(verbs_found[:3])
+            strengths.append(f"Demonstrates proactive engineering impact using strong action verbs like {verbs_str}.")
+        else:
+            strengths.append("Well-organized experience section with identifiable technical terminology.")
+
+        if word_count > 40:
+            strengths.append(f"Comprehensive detail provided across {word_count} words covering key technical responsibilities.")
+
+        # Dynamic improvements extraction
+        jd_lower = target_jd.lower() if target_jd else ""
+        all_candidate_missing = ["Kubernetes", "CI/CD", "Azure OpenAI", "Microservices Architecture", "System Design", "PostgreSQL", "Docker", "AWS"]
+        
+        missing_keywords = []
+        if jd_lower:
+            missing_keywords = [kw for kw in all_candidate_missing if kw.lower() in jd_lower and kw.lower() not in text_lower]
+        if not missing_keywords:
+            missing_keywords = [kw for kw in all_candidate_missing if kw.lower() not in text_lower][:3]
+
+        improvements = []
+        if missing_keywords:
+            missing_str = ", ".join(missing_keywords[:3])
+            improvements.append(f"Incorporate priority target job keywords missing from resume: {missing_str}.")
+
+        if not any(char in text_lower for char in ["%", "$", "reduced", "increased", "latency", "users", "ms", "s"]):
+            improvements.append("Add quantifiable impact metrics (e.g., latency reduced by X%, user scale, revenue supported) to experience bullet points.")
+        else:
+            improvements.append("Enhance bullet point impact by starting each statement with domain-aligned lead verbs like 'Architected' or 'Spearheaded'.")
+
+        if word_count < 150:
+            improvements.append("Expand section bullet points to include specific project technical stack and architecture decisions.")
+
         return ATSScoreOutput(
             overall_score=overall_score,
             formatting_score=formatting_score,
@@ -391,16 +437,10 @@ class AzureOpenAIService:
             sections_score=sections_score,
             action_verbs_score=action_verbs_score,
             impact_score=impact_score,
-            summary_feedback="Resume displays solid technical foundations. Focus on enhancing quantifiable impact metrics and section alignment for top ATS ranking.",
-            strengths=[
-                "Clear structure with identifiable experience and technical sections.",
-                "Good utilization of technical skill terminology."
-            ],
-            improvements=[
-                "Incorporate more specific percentage metrics and revenue impact numbers.",
-                "Use strong dynamic action verbs (e.g., 'Spearheaded', 'Engineered') at the start of each bullet point."
-            ],
-            missing_keywords=["CI/CD", "Kubernetes", "Azure OpenAI", "Microservices Architecture"]
+            summary_feedback=f"Resume displays solid technical foundations in {found_skills[0] if found_skills else 'software development'}. Focus on incorporating target job keywords and quantified impact metrics.",
+            strengths=strengths,
+            improvements=improvements,
+            missing_keywords=missing_keywords
         )
 
     _WEAK_VERB_LEADS = {
@@ -421,42 +461,12 @@ class AzureOpenAIService:
         "optimized": "Optimized",
     }
 
-    @staticmethod
-    def _pick_action_verb(text_lower: str) -> str:
-        if any(k in text_lower for k in ("ml", "inference", "model", "prediction", "vision", "nlp", " ai")):
-            return "Optimized"
-        if any(k in text_lower for k in ("api", "backend", "endpoint", "fastapi", "microservice", "service")):
-            return "Architected"
-        if any(k in text_lower for k in ("pipeline", "data", "parquet", "csv", "storage", "database", "sql", "etl", "batch")):
-            return "Engineered"
-        if any(k in text_lower for k in ("automate", "script", "bash", "deploy", "ci/", "workflow")):
-            return "Automated"
-        if any(k in text_lower for k in ("edge", "security", "biometric", "device", "embedded")):
-            return "Designed"
-        return "Spearheaded"
-
-    @staticmethod
-    def _outcome_clause(text_lower: str) -> str:
-        if any(k in text_lower for k in ("pipeline", "data", "parquet", "csv", "storage", "database", "sql", "etl")):
-            return "keeping downstream systems query-ready and reliable"
-        if any(k in text_lower for k in ("api", "backend", "endpoint", "fastapi", "microservice", "service")):
-            return "keeping client workflows fast and dependable"
-        if any(k in text_lower for k in ("ml", "inference", "model", "prediction", " ai")):
-            return "keeping model outputs consistent and production-tuned"
-        if any(k in text_lower for k in ("automate", "script", "bash", "deploy", "ci/", "workflow")):
-            return "removing repetitive manual steps from the delivery loop"
-        if any(k in text_lower for k in ("edge", "security", "biometric", "device", "embedded")):
-            return "with reliability and privacy preserved"
-        return ""
-
     def _mock_rewrap_bullet(self, clean_text: str, matched_metric: Any):
-        """Deterministic STAR reframe: replace the lead verb, never invent metrics."""
+        """Deterministic STAR reframe: replace weak lead verbs, preserve strong bullets intact."""
         text = clean_text.strip().rstrip(".")
         if not text:
             return clean_text, "", []
-        lower = text.lower()
-        action_verb = self._pick_action_verb(lower)
-
+        
         teamed = re.match(
             r"^(?:worked|helped)\s+with\s+(?:the\s+)?(?:team|group|others|colleagues)?\s*to\s+(.+)$",
             text,
@@ -464,42 +474,29 @@ class AzureOpenAIService:
         )
         if teamed and not matched_metric:
             rewritten = f"Led the team to {teamed.group(1)}".strip()
-            clause = self._outcome_clause(lower)
-            if clause:
-                rewritten = f"{rewritten}, {clause}."
-            else:
-                rewritten = f"{rewritten}."
             result_statement = (
-                "Strengthened the action lead and result framing without introducing any unverifiable numbers."
+                "Strengthened action lead to highlight team leadership and ownership."
             )
-            return rewritten, result_statement, []
+            return f"{rewritten}.".strip(), result_statement, []
 
         head, sep, tail = text.partition(" ")
-        if sep:
-            lead = head.lower()
-            if lead in self._WEAK_VERB_LEADS:
-                rewritten = f"{self._WEAK_VERB_LEADS[lead]} {tail}"
-            else:
-                rewritten = f"{action_verb} {head[0].lower() if head else ''}{head[1:]} {tail}"
-        else:
-            rewritten = f"{action_verb} {head.lower()}"
+        lead = head.lower()
 
-        if matched_metric:
-            metrics = [matched_metric.group(0).strip()]
-            result_statement = (
-                "Preserved the concrete, verifiable performance evidence present in the original bullet verbatim."
-            )
-            return f"{rewritten}.".strip(), result_statement, metrics
-
-        clause = self._outcome_clause(lower)
-        if clause:
-            rewritten = f"{rewritten}, {clause}."
+        if lead in self._WEAK_VERB_LEADS:
+            strong_verb = self._WEAK_VERB_LEADS[lead]
+            rewritten = f"{strong_verb} {tail}".strip()
         else:
-            rewritten = f"{rewritten}."
+            # Bullet already starts with a strong action verb (e.g. Engineered, Optimized, Architected)
+            rewritten = text.strip()
+
+        metrics = [matched_metric.group(0).strip()] if matched_metric else []
         result_statement = (
-            "Strengthened the action lead and result framing without introducing any unverifiable numbers."
+            "Preserved verifiable performance evidence present in the original bullet."
+            if matched_metric
+            else "Reframed bullet with strong action verb into STAR format."
         )
-        return rewritten, result_statement, []
+
+        return f"{rewritten}.".strip(), result_statement, metrics
 
     def _generate_mock_star_rewrites(self, bullet_points: List[str], target_jd: str) -> STARRewriteBatchOutput:
         """

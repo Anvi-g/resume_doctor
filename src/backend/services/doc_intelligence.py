@@ -24,8 +24,10 @@ class DocIntelligenceService:
         self.endpoint = endpoint or os.getenv("AZURE_DOC_INTEL_ENDPOINT", "").strip()
         self.key = key or os.getenv("AZURE_DOC_INTEL_KEY", "").strip()
         
+        force_offline = os.getenv("FORCE_OFFLINE", "0").lower() in ("true", "1")
         self.is_live = bool(
-            self.endpoint 
+            not force_offline
+            and self.endpoint 
             and self.key 
             and not self.endpoint.startswith("https://<your-")
             and not self.key.startswith("your_")
@@ -35,7 +37,10 @@ class DocIntelligenceService:
             logger.info("Initializing Azure Document Intelligence Client in live mode.")
             self.client = DocumentIntelligenceClient(
                 endpoint=self.endpoint,
-                credential=AzureKeyCredential(self.key)
+                credential=AzureKeyCredential(self.key),
+                connection_timeout=10,
+                read_timeout=30,
+                retry_total=2,
             )
         else:
             logger.info("Azure Document Intelligence credentials not configured. Running in local fallback mode.")

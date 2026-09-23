@@ -167,7 +167,8 @@ def api_health_check():
 async def analyze_resume(
     resume_file: UploadFile = File(..., description="Resume PDF or DOCX file"),
     job_description: str = Form("", description="Target job description text"),
-    target_role: Optional[str] = Form("", description="Optional target job title")
+    target_role: Optional[str] = Form("", description="Optional target job title"),
+    enable_pii: Optional[bool] = Form(True, description="Toggle PII Masking & Redaction ON/OFF")
 ):
     """
     Master Ingestion Gateway Route (Member 4 Lead):
@@ -197,7 +198,8 @@ async def analyze_resume(
             file_bytes=file_bytes,
             filename=filename,
             job_description=job_description,
-            target_role=target_role or ""
+            target_role=target_role or "",
+            enable_pii=bool(enable_pii if enable_pii is not None else True)
         )
         return response
     except Exception as e:
